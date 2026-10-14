@@ -73,19 +73,26 @@ try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){S=null}
 if(!S||!Array.isArray(S.cats))S=sample();
 migrate(S);
 let syncT;const remCache=new Map();
-function save(){remCache.clear();try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}clearTimeout(syncT);syncT=setTimeout(syncNative,400)}
+/* every change to the balance is logged with a reason; any action can be undone from the toast */
+let lastCash=S.cash,why='',UNDO=null;
+const snap=()=>{UNDO=JSON.stringify(S)};
+function save(){remCache.clear();
+  if(S.cashSet&&Math.abs(S.cash-lastCash)>0.001){S.cashLog=S.cashLog||[];S.cashLog.push({t:Date.now(),d:S.cash-lastCash,bal:S.cash,why:why||'تعديل'});if(S.cashLog.length>300)S.cashLog.splice(0,S.cashLog.length-300)}
+  lastCash=S.cash;why='';
+  try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}clearTimeout(syncT);syncT=setTimeout(syncNative,400)}
 
 const UI={tab:'home',ym:curYM(),showAll:false,debtDir:'owe'};
 
 /* ---------- money movement on the balance ---------- */
 const cashOn=date=>S.cashSet&&(!date||date>=S.cashDate);
-function applyCash(r,sign){if(cashOn(r.date)){r.cx=1;S.cash+=sign*r.amt}else r.cx=0}
-function revertCash(r,sign){if(r.cx)S.cash-=sign*r.amt;r.cx=0}
+const recLabel=(r,sign)=>{const c=sign<0?catById(r.cat):null;return (sign<0?'مصروف: ':'دخل: ')+(r.note||(c?c.name:'دخل إضافي'))};
+function applyCash(r,sign){if(cashOn(r.date)){r.cx=1;S.cash+=sign*r.amt;why=recLabel(r,sign)}else r.cx=0}
+function revertCash(r,sign){if(r.cx){S.cash-=sign*r.amt;why='إلغاء '+recLabel(r,sign)}r.cx=0}
 function creditSalary(){
   if(!S.cashSet||!S.autoSalary||!S.payday||!S.salary||S.sample)return 0;
   let ym=S.cashDate.slice(0,7),added=0;const cur=curYM(),t=today();
   while(ym<=cur){const pd=clampDay(ym,S.payday);
-    if(!S.salaryIn[ym]){if(pd<=S.cashDate)S.salaryIn[ym]=1;else if(pd<=t){S.cash+=S.salary;S.salaryIn[ym]=1;added+=S.salary}}
+    if(!S.salaryIn[ym]){if(pd<=S.cashDate)S.salaryIn[ym]=1;else if(pd<=t){S.cash+=S.salary;S.salaryIn[ym]=1;added+=S.salary;why='الراتب'}}
     ym=ymAdd(ym,1)}
   return added;
 }
@@ -329,6 +336,7 @@ function walletCard(R,F){
     ${msg}
     ${R.lent?`<p class="small muted" style="margin:0">مش محسوب في التوقع: <span class="num">${money(R.lent)}</span> ${CUR} ليك عند الناس.</p>`:''}
     ${upcoming.length?`<details class="upc"><summary>الجاي في أسبوعين (${nf.format(upcoming.length)})</summary><ul>${upcoming.map(e=>`<li><span>${esc(e.label)}${e.late?' <b class="late">متأخر</b>':''}</span><span class="muted small">${esc(dayName(e.date))}</span><b class="num ${e.amt>0?'pos':''}">${e.amt>0?'+':''}${money(e.amt)}</b></li>`).join('')}</ul></details>`:''}
+    ${(S.cashLog||[]).length?`<details class="upc"><summary>حركات الرصيد (${nf.format(S.cashLog.length)})</summary><ul class="clog">${S.cashLog.slice(-20).reverse().map(l=>{const d=new Date(l.t);return `<li><span>${esc(l.why)}<small class="muted"> · ${esc(dayName(iso(d)))} ${pad(d.getHours())}:${pad(d.getMinutes())}</small></span><b class="num ${l.d>0?'pos':''}"><bdi dir="ltr">${l.d>0?'+':'−'}${money(Math.abs(l.d))}</bdi></b><span class="small muted num">${money(l.bal)}</span></li>`}).join('')}</ul></details>`:''}
     <p class="small muted" style="margin:0">آخر جرد: ${esc(dayName(since))}</p>
   </div>`;
 }
@@ -501,21 +509,25 @@ function renderCommit(){
 const sheet=$('#sheet');
 sheet.addEventListener('click',e=>{if(e.target===sheet)sheet.close()});
 function openSheet(title,body,onSubmit,onReady){
-  if(sheet.open)sheet.close();
+  if(sheet.open)sheet.close();snap();
   sheet.innerHTML=`<form novalidate><div class="grab"></div><div class="row between"><h2>${title}</h2><button type="button" class="icon-btn" data-close aria-label="إغلاق"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>${body}<p class="err" id="err" hidden></p></form>`;
   const f=sheet.querySelector('form');
   f.querySelector('[data-close]').onclick=()=>sheet.close();
-  f.addEventListener('submit',e=>{e.preventDefault();const msg=onSubmit(f);if(typeof msg==='string'){showErr(f,msg);return}if(msg===false)return;save();sheet.close();render();if(msg&&msg.toast)toast(msg.toast)});
+  f.addEventListener('submit',e=>{e.preventDefault();const msg=onSubmit(f);if(typeof msg==='string'){showErr(f,msg);return}if(msg===false)return;const changed=UNDO&&UNDO!==JSON.stringify(S);save();sheet.close();render();if((msg&&msg.toast)||changed)toast((msg&&msg.toast)||'اتحفظ',changed);UNDO=null});
   sheet.showModal();
   onReady&&onReady(f);
 }
 const showErr=(f,m)=>{const er=$('#err',f);er.textContent=m;er.hidden=false};
-function done(t){save();if(sheet.open)sheet.close();render();if(t)toast(t)}
+function done(t){const changed=UNDO&&UNDO!==JSON.stringify(S);save();if(sheet.open)sheet.close();render();if(t||changed)toast(t||'اتحفظ',changed);UNDO=null}
 function arm(btn,fn,label='اضغط تاني للتأكيد'){
   btn.addEventListener('click',()=>{if(btn.dataset.armed){fn();return}const t=btn.textContent;btn.dataset.armed='1';btn.textContent=label;setTimeout(()=>{if(btn.isConnected){delete btn.dataset.armed;btn.textContent=t}},3500)});
 }
 function picker(f,name,val,onChange){$$(`[data-pick="${name}"]`,f).forEach(b=>{b.setAttribute('aria-pressed',b.dataset.v===val);b.onclick=()=>{$$(`[data-pick="${name}"]`,f).forEach(x=>x.setAttribute('aria-pressed','false'));b.setAttribute('aria-pressed','true');f.dataset[name]=b.dataset.v;onChange&&onChange()}});f.dataset[name]=val??''}
-function toast(t){$$('.toast').forEach(x=>x.remove());const el=document.createElement('div');el.className='toast';el.setAttribute('role','status');el.textContent=t;document.body.appendChild(el);setTimeout(()=>el.remove(),2600)}
+function toast(t,undo){$$('.toast').forEach(x=>x.remove());const el=document.createElement('div');el.className='toast';el.setAttribute('role','status');
+  const sp=document.createElement('span');sp.textContent=t;el.appendChild(sp);
+  if(undo&&UNDO){const keep=UNDO;const b=document.createElement('button');b.type='button';b.className='undo';b.textContent='تراجع';
+    b.onclick=()=>{S=migrate(JSON.parse(keep));lastCash=S.cash;UNDO=null;save();if(sheet.open)sheet.close();render();el.remove();toast('اترجعت زي ما كانت')};el.appendChild(b)}
+  document.body.appendChild(el);setTimeout(()=>el.remove(),undo?6500:2800)}
 
 function frequent(){
   const from=addDays(today(),-90);const m=new Map();
@@ -629,7 +641,7 @@ function cashSheet(){
     <button class="btn full">حفظ</button>`,
   f=>{const a=toNum($('#f-cash',f).value);if(isNaN(a))return 'اكتب رقم.';
     const pi=$('#f-pay',f);if(pi&&pi.value.trim()){const p=Math.round(toNum(pi.value));if(!(p>=1&&p<=31))return 'يوم القبض بين 1 و 31.';S.payday=p}
-    S.cash=a;S.cashSet=true;S.cashDate=today();S.sample=false;
+    S.cash=a;S.cashSet=true;S.cashDate=today();S.sample=false;why='تعديل الرصيد يدويًا';
     if(S.payday&&clampDay(curYM(),S.payday)<=today())S.salaryIn[curYM()]=1;
     if(!S.recon.length)S.recon.push({id:uid(),date:today(),expected:a,actual:a,gap:0,start:true});
     return {toast:'اتسجل رصيدك. من هنا كل حركة هتتخصم أو تتضاف عليه.'}},f=>$('#f-cash',f).select());
@@ -691,7 +703,7 @@ function closeRecon(actual,expected,since,label){
   if(gap<-0.5)S.exp.push({id:uid(),amt:-gap,cat:UNK,note:`فرق ${label} من ${shortDate(since)}`,date:today(),cx:0});
   else if(gap>0.5)S.inc.push({id:uid(),amt:gap,note:`زيادة في ${label} من ${shortDate(since)}`,date:today(),cx:0});
   S.recon.push({id:uid(),date:today(),since,expected,actual,gap});
-  S.cash=actual;S.cashSet=true;if(!S.cashDate)S.cashDate=today();
+  S.cash=actual;S.cashSet=true;if(!S.cashDate)S.cashDate=today();why=label;
   return {toast:Math.abs(gap)<0.5?'مظبوط بالمليم. مفيش فلوس ضايعة.':gap<0?`اتسجل ${money(-gap)} مش معروف. لو افتكرت، انقله لبنده.`:`معاك ${money(gap)} زيادة، اتسجلت دخل.`};
 }
 const modeSeg=m=>`<div class="seg" role="group" aria-label="نوع الجرد"><button type="button" data-rmode="month" aria-pressed="${m==='month'}">من يوم القبض</button><button type="button" data-rmode="since" aria-pressed="${m==='since'}">من آخر جرد</button></div>`;
@@ -713,7 +725,7 @@ function reconSheet(mode){
       if(isNaN(v)){g.hidden=true;h.hidden=true;return}const gap=v-S.cash;g.hidden=false;
       g.className='rc-gap '+(Math.abs(gap)<0.5?'ok':gap<0?'bad':'plus');g.innerHTML=gapHtml(gap);h.hidden=!(gap<-0.5)};
     act.addEventListener('input',upd);act.focus();
-    wireRemember(f,r=>{S.cash-=r.amt;upd()})});
+    wireRemember(f,r=>{S.cash-=r.amt;why='مصروف اتفكر في الجرد: '+(r.note||'');upd()})});
 }
 function reconMonthSheet(){
   const start=periodStart();
@@ -815,12 +827,12 @@ function debtSheet(d,dir){
     const ist=$('#f-istart',f).value||curYM();if(inst&&!/^\d{4}-\d{2}$/.test(ist))return 'اختار شهر بداية الأقساط.';
     const idv=$('#f-iday',f).value.trim(),iday=idv?Math.round(toNum(idv)):0;if(idv&&!(iday>=1&&iday<=31))return 'يوم القسط بين 1 و 31.';
     const v={dir:f.dataset.dir,name,amt:a,note:$('#f-note',f).value.trim(),date:$('#f-date',f).value||today(),due:$('#f-due',f).value,inst,instStart:inst?ist:'',instDay:iday||0};
-    if(isNew){const nd={id:uid(),paid:0,cxPay:{},cxSum:0,instPay:{},...v};const cx=$('#f-cx',f);if(cx&&cx.checked){nd.openCx=v.dir==='owe'?a:-a;S.cash+=nd.openCx}S.debts.push(nd)}
+    if(isNew){const nd={id:uid(),paid:0,cxPay:{},cxSum:0,instPay:{},...v};const cx=$('#f-cx',f);if(cx&&cx.checked){nd.openCx=v.dir==='owe'?a:-a;S.cash+=nd.openCx;why=(v.dir==='owe'?'استلفت من ':'سلّفت ')+name}S.debts.push(nd)}
     else{Object.assign(d,v);d.paid=Math.min(d.paid,a)}UI.debtDir=v.dir;return {toast:'اتحفظ'}},
   f=>{picker(f,'dir',d.dir,()=>{hint();cxl()});
     const cxl=()=>{const l=$('#cxLbl',f);if(!l)return;l.textContent=f.dataset.dir==='owe'?'الفلوس دي دخلت رصيدي (استلفتها دلوقتي)':'الفلوس دي طلعت من رصيدي (سلّفتها دلوقتي)';const cb=$('#f-cx',f);cb.checked=($('#f-date',f).value||today())===today()};
     const del=$('#delDebt',f);del&&arm(del,()=>{S.debts=S.debts.filter(x=>x.id!==d.id);done('اتمسح')},'اضغط تاني: الرصيد مش هيتغيّر');
-    const u=$('#unpay',f);u&&(u.onclick=()=>{S.cash-=(d.cxSum||0)+sum(Object.values(d.cxPay||{}),x=>x);d.paid=0;d.instPay={};d.cxPay={};d.cxSum=0;d.pays=[];done('اتلغى السداد')});
+    const u=$('#unpay',f);u&&(u.onclick=()=>{S.cash-=(d.cxSum||0)+sum(Object.values(d.cxPay||{}),x=>x);why='إلغاء سداد '+d.name;d.paid=0;d.instPay={};d.cxPay={};d.cxSum=0;d.pays=[];done('اتلغى السداد')});
     const hint=()=>{const a=toNum($('#f-amt',f).value),i=toNum($('#f-inst',f).value),st=$('#f-istart',f).value||curYM();const h=$('#planHint',f);
       if(!(a>0)||!(i>0)){h.textContent='';return}const left=Math.max(0,a-(d.paid||0));const m=Math.ceil(left/i);
       h.innerHTML=`${nf.format(m)} ${m===1?'قسط':m<=10?'أقساط':'قسط'}، ${f.dataset.dir==='lent'?'يخلص':'تخلص'} في <b>${esc(monthName(ymAdd(st>curYM()?st:curYM(),m-1)))}</b>${f.dataset.dir==='owe'?'، والقسط هيتخصم من المتبقي كل شهر':''}.`};
@@ -833,7 +845,7 @@ function paySheet(d){
     ${S.cashSet?`<label class="toggle"><span>${d.dir==='owe'?'اتخصم من رصيدي':'اتضاف لرصيدي'}</span><input type="checkbox" id="f-cx" checked></label>`:''}
     <button class="btn warmb full">${d.dir==='owe'?'سددت':'اتسدد لي'}</button>`,
   f=>{const a=toNum($('#f-amt',f).value);if(!(a>0))return 'اكتب مبلغ أكبر من صفر.';if(a>left+0.001)return `أكبر من المتبقي (${money(left)}).`;d.paid+=a;d.pays=d.pays||[];d.pays.push({date:today(),amt:a});
-    const cx=$('#f-cx',f);if(cx&&cx.checked){const v=d.dir==='owe'?-a:a;d.cxSum=(d.cxSum||0)+v;S.cash+=v}
+    const cx=$('#f-cx',f);if(cx&&cx.checked){const v=d.dir==='owe'?-a:a;d.cxSum=(d.cxSum||0)+v;S.cash+=v;why=(d.dir==='owe'?'سداد لـ ':'سداد من ')+d.name}
     return {toast:d.paid>=d.amt?'اتسدد بالكامل':'اتسجل سداد جزئي'}},
   f=>$('#f-amt',f).select());
 }
@@ -867,7 +879,7 @@ function freshSheet(){
   f=>{const a=toNum($('#f-sal',f).value),p=Math.round(toNum($('#f-pay',f).value)),c=toNum($('#f-cash',f).value);const set=S.set;
     S=migrate(blank());S.set=Object.assign(set,{lastBackup:set.lastBackup});if(a>0)S.salary=a;if(p>=1&&p<=31)S.payday=p;
     if(!isNaN(c)){S.cash=c;S.cashSet=true;S.cashDate=today();S.recon.push({id:uid(),date:today(),expected:c,actual:c,gap:0,start:true});if(S.payday&&clampDay(curYM(),S.payday)<=today())S.salaryIn[curYM()]=1}
-    UI.ym=curYM();return {toast:'جاهز. وزّع ميزانيتك من شاشة الميزانية'}},f=>$('#f-sal',f).focus());
+    lastCash=S.cash;UI.ym=curYM();return {toast:'جاهز. وزّع ميزانيتك من شاشة الميزانية'}},f=>$('#f-sal',f).focus());
 }
 function settingsSheet(){
   const N=!!NATIVE;
@@ -905,12 +917,12 @@ function settingsSheet(){
     $('#st-file',f).onchange=e=>{const file=e.target.files[0];if(!file)return;const rd=new FileReader();rd.onload=()=>restoreFrom(rd.result,f);rd.readAsText(file)};
     $('#st-copy',f).onclick=async e=>{const ta=$('#st-json',f);try{await navigator.clipboard.writeText(ta.value);e.target.textContent='اتنسخت'}catch(_){ta.focus();ta.select();e.target.textContent='النص متحدد، انسخه'}};
     $('#st-imp',f).onclick=e=>{const ta=$('#st-json',f);if(ta.readOnly){ta.readOnly=false;ta.value='';ta.placeholder='الصق النسخة الاحتياطية هنا ثم اضغط استرجع';ta.focus();e.target.textContent='استرجع';return}restoreFrom(ta.value,f)};
-    arm($('#st-reset',f),()=>{const set=S.set;S=migrate(blank());S.set=set;done('اتمسحت البيانات')});
-    arm($('#st-sample',f),()=>{S=migrate(sample());UI.ym=curYM();done()});
+    arm($('#st-reset',f),()=>{const set=S.set;S=migrate(blank());S.set=set;lastCash=S.cash;UNDO=null;done('اتمسحت البيانات')});
+    arm($('#st-sample',f),()=>{S=migrate(sample());lastCash=S.cash;UNDO=null;UI.ym=curYM();done()});
   });
 }
 function restoreFrom(text,f){
-  try{const o=JSON.parse(text);if(!o||!Array.isArray(o.cats)||!Array.isArray(o.exp))throw 0;S=migrate(Object.assign(blank(),o,{sample:false}));done(`اتسترجعت البيانات (${nf.format(S.exp.length)} مصروف)`)}
+  try{const o=JSON.parse(text);if(!o||!Array.isArray(o.cats)||!Array.isArray(o.exp))throw 0;S=migrate(Object.assign(blank(),o,{sample:false}));lastCash=S.cash;UNDO=null;done(`اتسترجعت البيانات (${nf.format(S.exp.length)} مصروف)`)}
   catch(_){showErr(f,'الملف ده مش نسخة احتياطية من ميزان.')}
 }
 function backupNow(silent){
@@ -969,13 +981,16 @@ document.addEventListener('click',e=>{
   if(ds.pay){paySheet(S.debts.find(d=>d.id===ds.pay));return}
   if(ds.editDebt){debtSheet(S.debts.find(d=>d.id===ds.editDebt));return}
   if(ds.editCom){comSheet(S.coms.find(c=>c.id===ds.editCom));return}
-  if(ds.inst){const d=S.debts.find(x=>x.id===ds.inst),cur=curYM();
+  if(ds.inst||ds.paid||ds.got)snap();
+  if(ds.inst){const d=S.debts.find(x=>x.id===ds.inst),cur=curYM();why=(d.instPay[cur]?'إلغاء قسط ':'قسط ')+d.name;
     if(d.instPay[cur]){d.paid=Math.max(0,d.paid-d.instPay[cur]);S.cash-=(d.cxPay[cur]||0);delete d.cxPay[cur];delete d.instPay[cur];done('اتلغى قسط الشهر')}
     else{const a=Math.min(d.inst,d.amt-d.paid);d.instPay[cur]=a;d.paid+=a;if(S.cashSet){const v=d.dir==='owe'?-a:a;d.cxPay[cur]=v;S.cash+=v}done(d.paid>=d.amt?'اتسدد الدين بالكامل':'اتسجل القسط')}return}
   if(ds.paid){const c=S.coms.find(x=>x.id===ds.paid),ym=UI.ym;const k=c.paid.indexOf(ym);
-    if(k>=0){c.paid.splice(k,1);if(c.cx[ym]){S.cash+=c.cx[ym];delete c.cx[ym]}done()}
-    else{c.paid.push(ym);if(S.cashSet&&ym===curYM()){c.cx[ym]=c.amt;S.cash-=c.amt}done(S.cashSet&&ym===curYM()?`اتخصم ${money(c.amt)} من رصيدك`:'')}return}
+    if(k>=0){c.paid.splice(k,1);if(c.cx[ym]){const v=c.cx[ym];S.cash+=v;delete c.cx[ym];why='إلغاء علامة '+c.name;done(`رجع ${money(v)} لرصيدك`)}
+      else done(S.cashSet?`اتشالت العلامة. ${c.name} مكانتش اتخصمت من رصيدك (اتعلّمت قبل ما تسجّل رصيدك)، فرصيدك زي ما هو.`:'')}
+    else{c.paid.push(ym);if(S.cashSet&&ym===curYM()){c.cx[ym]=c.amt;S.cash-=c.amt;why=c.name}done(S.cashSet&&ym===curYM()?`اتخصم ${money(c.amt)} من رصيدك`:'')}return}
   if(ds.got){const c=S.coms.find(x=>x.id===ds.got),ym=UI.ym,v=c.amt*c.months;
+    why=(c.got[ym]?'إلغاء قبض ':'قبض ')+c.name;
     if(c.got[ym]){if(c.got[ym]>1)S.cash-=c.got[ym];delete c.got[ym];done()}else{c.got[ym]=S.cashSet?v:1;if(S.cashSet)S.cash+=v;done(S.cashSet?`اتضاف ${money(v)} لرصيدك`:'')}return}
 });
 
@@ -1002,6 +1017,7 @@ $('#fab').onclick=()=>txSheet();
 
 /* startup */
 const added=creditSalary();
+if(added)why='الراتب';
 save();
 fromHash();
 if(added)setTimeout(()=>toast(`اتضاف الراتب لرصيدك: ${money(added)} ${CUR}`),500);
