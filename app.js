@@ -114,11 +114,23 @@ function debtPlan(d){
   const months=Math.ceil(left/d.inst);
   return {inst:d.inst,left,months,end:ymAdd(base,months-1),paidNow,start:d.instStart};
 }
+/* money that moved because of debts in a month (not income/spending, but it changes what is left) */
+function debtFlow(ym){
+  let borrowed=0,lentOut=0,lentBack=0,owePaid=0;
+  S.debts.forEach(d=>{
+    const inM=d.date&&d.date.startsWith(ym);
+    if(d.dir==='owe'&&inM)borrowed+=d.amt;
+    if(d.dir==='lent'&&inM)lentOut+=d.amt;
+    (d.pays||[]).forEach(p=>{if(!p.date.startsWith(ym))return;if(d.dir==='lent')lentBack+=p.amt;else owePaid+=p.amt});
+    if(d.dir==='lent'&&d.instPay&&d.instPay[ym])lentBack+=d.instPay[ym];
+  });
+  return {borrowed,lentOut,lentBack,owePaid,net:borrowed-lentOut+lentBack-owePaid};
+}
 /* leftover of a month (income − commitments − spending) rolls into the next one */
 function monthRemaining(ym){
   if(remCache.has(ym))return remCache.get(ym);
   const commit=sum(S.coms.filter(c=>comActive(c,ym)))+sum(S.debts,d=>instDue(d,ym));
-  const v=carryFor(ym)+(S.salary||0)+sum(S.inc.filter(x=>x.date.startsWith(ym)))-commit-spentIn(ym);
+  const v=carryFor(ym)+(S.salary||0)+sum(S.inc.filter(x=>x.date.startsWith(ym)))-commit-spentIn(ym)+debtFlow(ym).net;
   remCache.set(ym,v);return v;
 }
 function carryFor(ym){if(!S.carryMonth)return 0;const prev=ymAdd(ym,-1);if(prev<S.since)return 0;return Math.max(0,monthRemaining(prev))}
@@ -131,7 +143,8 @@ function calc(ym){
   const commit=sum(coms)+debtInst;
   const extra=sum(S.inc.filter(x=>x.date.startsWith(ym)));
   const carry=carryFor(ym);const base=S.salary||0, salary=base+extra+carry, goal=S.goal||0;
-  const remaining=salary-commit-spent;
+  const DF=debtFlow(ym);
+  const remaining=salary-commit-spent+DF.net;
   const days=dim(ym), cur=curYM();
   const day=ym<cur?days:ym>cur?0:+today().slice(8);
   const daysLeft=Math.max(0,days-day+(ym===cur?1:0));
@@ -147,7 +160,7 @@ function calc(ym){
   if(unknown)byCat.push({...catById(UNK),i:-1,limit:0,carryIn:0,spent:unknown,ratio:0,subs:[],general:0});
   const owe=sum(S.debts.filter(d=>d.dir==='owe'),d=>Math.max(0,d.amt-d.paid));
   const lent=sum(S.debts.filter(d=>d.dir==='lent'),d=>Math.max(0,d.amt-d.paid));
-  return {carry,exp,spent,unknown,commit,debtInst,coms,base,extra,salary,goal,remaining,spendable,days,day,daysLeft,avg,allowed,forecastSpent,forecastLeft,byCat,owe,lent,net:lent-owe,
+  return {DF,carry,exp,spent,unknown,commit,debtInst,coms,base,extra,salary,goal,remaining,spendable,days,day,daysLeft,avg,allowed,forecastSpent,forecastLeft,byCat,owe,lent,net:lent-owe,
     used:salary?(spent+commit)/salary:0};
 }
 function payoffInfo(){
@@ -166,7 +179,9 @@ function payoffInfo(){
 function dailyRate(){
   const ym=curYM(),R=calc(ym);
   const budget=sum(S.cats,c=>limitFor(c,ym).limit);
-  const variable=R.spent-R.unknown;
+  // big one-off purchases (over 10% of monthly income) are not daily spending
+  const cap=Math.max(1,(R.salary||0)*0.1);
+  const variable=sum(R.exp.filter(x=>x.cat!==UNK&&(!R.salary||x.amt<=cap)));
   if(R.day>=5&&variable>0)return variable/R.day;
   if(budget>0)return budget/R.days;
   return R.day?variable/R.day:0;
@@ -193,7 +208,7 @@ function project(rate,H=45){
     pts.push({date:D,bal});
     ev.filter(e=>e.kind!=='daily').forEach(e=>events.push({...e,date:D}));
     if(bal<minBal){minBal=bal;minDate=D}
-    if(bal<0&&!firstNeg){const big=ev.filter(e=>e.amt<0&&e.kind!=='daily').sort((a,b)=>a.amt-b.amt)[0];firstNeg={date:D,bal,cause:big?big.label:'مصروفك اليومي'}}
+    if(bal<0&&!firstNeg){const big=ev.filter(e=>e.amt<0&&e.kind!=='daily').sort((a,b)=>a.amt-b.amt)[0];firstNeg={date:D,bal,cause:big?big.label:(rate>0?'مصروفك اليومي':'الالتزامات')}}
     if(nextPay===D&&balBeforePay===null)balBeforePay=bal-S.salary;
   }
   return {pts,events,firstNeg,nextPay,balBeforePay,minBal,minDate,rate,end:bal};
@@ -249,6 +264,7 @@ function renderHome(){
       <button class="salary-btn lbl" data-act="salary">الراتب: <span class="num">${money(R.base)}</span>${R.extra?` + <span class="num">${money(R.extra)}</span>`:''} ✎</button></div>
     ${R.carry?`<span class="lbl carry-lbl">+ <span class="num">${money(R.carry)}</span> مرحّلين من ${esc(monthName(ymAdd(UI.ym,-1)))}</span>`:''}
     <div class="big num">${smoney(R.remaining)}<span>${CUR}</span></div>
+    ${R.DF.net?`<span class="lbl carry-lbl">${[R.DF.lentOut?`سلّفت ${money(R.DF.lentOut)}`:'',R.DF.borrowed?`استلفت ${money(R.DF.borrowed)}`:'',R.DF.lentBack?`رجعلك ${money(R.DF.lentBack)}`:'',R.DF.owePaid?`سددت ${money(R.DF.owePaid)}`:''].filter(Boolean).join(' · ')}</span>`:''}
     <div class="bar" role="img" aria-label="استهلكت ${usedPct}% من الدخل"><i class="${usedPct>100?'over':''}" style="width:${Math.min(100,usedPct)}%"></i></div>
     <div class="split">
       <div><b class="num">${money(R.spent)}</b><small>مصروفات</small></div>
@@ -256,7 +272,8 @@ function renderHome(){
       <div><b class="num">${R.goal?money(R.goal):usedPct+'%'}</b><small>${R.goal?'هدف ادخار':'من الدخل'}</small></div>
     </div>
   </div>
-  ${isCur&&S.cashSet&&R.remaining-S.cash>Math.max(500,R.salary*0.05)?`<div class="gap-hint"><p>حسب المتسجل المفروض يفضل معاك <b class="num">${money(R.remaining)}</b> من دخل الشهر، لكن رصيدك <b class="num">${money(S.cash)}</b>. الفرق <b class="num">${money(R.remaining-S.cash)}</b> ${CUR} غالبًا مصاريف متسجلتش${R.lent?' أو فلوس سلّفتها':''}.</p><button type="button" class="btn small-btn" data-act="reconMonth">اعمل جرد الشهر</button></div>`:''}
+  ${(()=>{if(!isCur||!S.cashSet)return '';const unpaid=sum(R.coms.filter(c=>!(c.paid||[]).includes(UI.ym)))+sum(S.debts,d=>d.dir==='owe'&&!(d.instPay||{})[UI.ym]?instDue(d,UI.ym):0);R.gapCash=R.remaining+unpaid-S.cash;return ''})()}
+  ${isCur&&S.cashSet&&R.gapCash>Math.max(500,R.salary*0.05)?`<div class="gap-hint"><p>حسب المتسجل المفروض يفضل معاك <b class="num">${money(R.remaining)}</b> من دخل الشهر، لكن رصيدك <b class="num">${money(S.cash)}</b>. الفرق <b class="num">${money(R.gapCash)}</b> ${CUR} غالبًا مصاريف متسجلتش.</p><button type="button" class="btn small-btn" data-act="reconMonth">اعمل جرد الشهر</button></div>`:''}
   ${!R.base?`<div class="banner"><p>سجّل راتبك ويوم القبض علشان التحليلات تتحسب صح.</p><button type="button" data-act="salary">سجّل الراتب</button></div>`:''}
   ${isCur?walletCard(R,F):''}
   ${alerts.length?`<div class="alerts" role="status">${alerts.map(a=>`<div class="alert ${a.k}"><span class="dot"></span><div>${a.h}</div></div>`).join('')}</div>`:''}
@@ -296,7 +313,7 @@ function walletCard(R,F){
   if(F.firstNeg){
     msg=`<p class="fc bad">⚠ رصيدك هيخلص <b>${esc(dayName(F.firstNeg.date))}</b> وهيوصل ${smoney(F.firstNeg.bal)} ${CUR} بسبب <b>${esc(F.firstNeg.cause)}</b>.</p>`;
     if(F.safe!==null&&F.firstNeg.date<F.stop)msg+=F.safe>0?`<p class="fc-tip">علشان تعدّي لحد ${F.nextPay?'القبض '+esc(dayName(F.nextPay)):'آخر الشهر'}، متصرفش أكتر من <b class="num">${money(F.safe)}</b> ${CUR} في اليوم (بدل <span class="num">${money(F.rate)}</span>).</p>`
-      :`<p class="fc-tip">حتى لو مصرفتش خالص، الالتزامات اللي جاية أكبر من رصيدك. ${R.lent?`حصّل جزء من <span class="num">${money(R.lent)}</span> اللي ليك عند الناس، أو `:''}أجّل أكبر دفعة لحد القبض.</p>`;
+      :(()=>{const Z=project(0);const z=Z.firstNeg;return `<p class="fc-tip">حتى لو مصرفتش خالص، <b>${esc(z?z.cause:'الالتزامات')}</b> ${z?esc(dayName(z.date)):''} هتخلّي رصيدك ${z?smoney(z.bal):''} ${CUR}. ${R.lent?`حصّل جزء من <span class="num">${money(R.lent)}</span> اللي ليك عند الناس، أو `:''}أجّل الدفعة دي لحد القبض.</p>`})();
   }else if(F.nextPay)msg=`<p class="fc ok">رصيدك هيكفي لحد القبض ${esc(dayName(F.nextPay))}، وهيفضل معاك تقريبًا <b class="num">${money(F.balBeforePay)}</b> ${CUR} قبل الراتب.</p>`;
   else msg=`<p class="fc ok">بمعدل صرفك (<span class="num">${money(F.rate)}</span> في اليوم) هيفضل معاك تقريبًا <b class="num">${money(F.end)}</b> ${CUR} بعد 45 يوم. سجّل يوم القبض علشان التوقع يبقى أدق.</p>`;
   const upcoming=F.events.filter(e=>dayDiff(e.date,today())<=14).slice(0,6);
@@ -317,7 +334,7 @@ function walletCard(R,F){
 }
 function spark(F){
   const pts=F.pts;if(pts.length<2)return '';
-  const W=320,H=84,pl=4,pr=4,pt=8,pb=16;
+  const W=320,H=96,pl=4,pr=4,pt=16,pb=16;
   const vals=pts.map(p=>p.bal);const mx=Math.max(0,...vals),mn=Math.min(0,...vals);const span=mx-mn||1;
   const x=i=>W-pr-(W-pl-pr)*i/(pts.length-1);const y=v=>pt+(H-pt-pb)*(mx-v)/span;
   const line=pts.map((p,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(p.bal).toFixed(1)}`).join('');
@@ -329,8 +346,8 @@ function spark(F){
     <path d="${area}" fill="url(#sg)"/>
     <line x1="${pl}" x2="${W-pr}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="3 3" stroke-width="1" opacity=".6"/>
     <path d="${line}" fill="none" stroke="var(--teal-2)" stroke-width="2" stroke-linejoin="round"/>
-    ${pays.map(o=>`<line x1="${x(o.i)}" x2="${x(o.i)}" y1="${pt}" y2="${H-pb}" stroke="var(--green)" stroke-width="1" opacity=".5"/><text x="${x(o.i)}" y="${H-3}" text-anchor="middle" font-size="9" fill="var(--green)">قبض</text>`).join('')}
-    ${neg>=0?`<circle cx="${x(neg)}" cy="${y(pts[neg].bal)}" r="4" fill="var(--danger)"/><text x="${x(neg)}" y="${H-3}" text-anchor="middle" font-size="9" fill="var(--danger)">عجز</text>`:''}
+    ${pays.map(o=>`<line x1="${x(o.i)}" x2="${x(o.i)}" y1="${pt}" y2="${H-pb}" stroke="var(--green)" stroke-width="1" opacity=".5"/><text x="${Math.min(W-14,Math.max(14,x(o.i)))}" y="10" text-anchor="middle" font-size="9" fill="var(--green)">قبض</text>`).join('')}
+    ${neg>=0?`<circle cx="${x(neg)}" cy="${y(pts[neg].bal)}" r="4" fill="var(--danger)"/><text x="${Math.min(W-14,Math.max(14,x(neg)))}" y="10" text-anchor="middle" font-size="9" fill="var(--danger)">عجز</text>`:''}
     <circle cx="${x(0)}" cy="${y(pts[0].bal)}" r="3" fill="var(--teal-2)"/>
     <text x="${W-pr}" y="${H-3}" text-anchor="end" font-size="9" fill="var(--muted)">النهارده</text>
     <text x="${pl}" y="${H-3}" text-anchor="start" font-size="9" fill="var(--muted)">بعد 45 يوم</text>
@@ -346,11 +363,11 @@ function goalCard(R){
 function whereCard(R){
   if(!R.salary&&!R.spent)return '';
   const known=R.spent-R.unknown;
-  const lentM=sum(S.debts.filter(d=>d.dir==='lent'&&d.date&&d.date.startsWith(UI.ym)));
-  const left=R.salary-R.commit-R.spent-lentM;
-  const rows=[['مصروفات متسجلة',known,'var(--teal-2)'],['التزامات وأقساط',R.commit,'var(--c3)'],['سلّفت للناس',lentM,'var(--c8)'],['مش معروف',R.unknown,'var(--danger)'],[left>=0?'متبقي من دخل الشهر':'صرفت زيادة عن دخلك',Math.abs(left),left>=0?'var(--green)':'var(--danger)']].filter(r=>r[1]>0);
-  const tot=Math.max(R.salary,R.spent+R.commit+lentM)||1;
-  return `<div class="card where"><div class="row between"><h3 style="margin:0">فلوس ${UI.ym===curYM()?'الشهر':esc(monthName(UI.ym))} راحت فين؟</h3><span class="small muted">الدخل <span class="num">${money(R.salary)}</span>${R.carry?` (منه <span class="num">${money(R.carry)}</span> مرحّل)`:''}</span></div>
+  const lentM=R.DF.lentOut,owePaid=R.DF.owePaid,inExtra=R.DF.borrowed+R.DF.lentBack;
+  const left=R.remaining;
+  const rows=[['مصروفات متسجلة',known,'var(--teal-2)'],['التزامات وأقساط',R.commit,'var(--c3)'],['سلّفت للناس',lentM,'var(--c8)'],['سداد ديون',owePaid,'var(--c5)'],['مش معروف',R.unknown,'var(--danger)'],[left>=0?'متبقي من دخل الشهر':'صرفت زيادة عن دخلك',Math.abs(left),left>=0?'var(--green)':'var(--danger)']].filter(r=>r[1]>0);
+  const tot=Math.max(R.salary+inExtra,R.spent+R.commit+lentM+owePaid)||1;
+  return `<div class="card where"><div class="row between"><h3 style="margin:0">فلوس ${UI.ym===curYM()?'الشهر':esc(monthName(UI.ym))} راحت فين؟</h3><span class="small muted">دخل <span class="num">${money(R.salary)}</span>${R.carry?` (منه <span class="num">${money(R.carry)}</span> مرحّل)`:''}${inExtra?` + ديون <span class="num">${money(inExtra)}</span>`:''}</span></div>
     <div class="stack" role="img" aria-label="توزيع دخل الشهر">${rows.map(r=>`<i style="width:${r[1]/tot*100}%;background:${r[2]}"></i>`).join('')}</div>
     <ul class="where-list">${rows.map(r=>`<li><span class="sw" style="background:${r[2]}"></span><span>${r[0]}</span><b class="num">${money(r[1])}</b><span class="pc num">${Math.round(r[1]/tot*100)}%</span></li>`).join('')}</ul>
     ${R.unknown?`<p class="small" style="margin:0;color:var(--danger)">فيه <b class="num">${money(R.unknown)}</b> ${CUR} اتصرفوا ومش عارف فين (${Math.round(R.unknown/(R.salary||R.spent)*100)}% من دخلك). لو افتكرت حاجة، افتحها من آخر الحركات وانقلها لبندها.</p>`
@@ -640,9 +657,10 @@ function monthFlow(start){
     if(c.got&&c.got[ym]&&within)gamIn+=c.amt*c.months}));
   let instOut=0,instIn=0;S.debts.forEach(d=>months.forEach(ym=>{const a=(d.instPay||{})[ym];if(!a)return;
     const dd=clampDay(ym,d.instDay||S.payday||1);if(!(inP(dd)||ym===curYM()))return;if(d.dir==='owe')instOut+=a;else instIn+=a}));
+  let paysIn=0,paysOut=0;S.debts.forEach(d=>(d.pays||[]).forEach(p=>{if(!inP(p.date))return;if(d.dir==='lent')paysIn+=p.amt;else paysOut+=p.amt}));
   const lentNew=S.debts.filter(d=>d.dir==='lent'&&inP(d.date));
   const borrowed=S.debts.filter(d=>d.dir==='owe'&&inP(d.date));
-  return {exp,inc,coms,gamIn,instOut,instIn,lentNew,borrowed};
+  return {exp,inc,coms,gamIn,instOut,instIn,paysIn,paysOut,lentNew,borrowed};
 }
 /* the "help me remember" block shared by both modes */
 function rememberBlock(since){
@@ -711,10 +729,12 @@ function reconMonthSheet(){
       <div class="flow-row" id="m-inc-row"><span>دخل إضافي</span><b class="num" id="m-inc"></b></div>
       <div class="flow-row" id="m-gam-row"><span>قبض جمعية</span><b class="num" id="m-gam"></b></div>
       <div class="flow-row" id="m-instin-row"><span>أقساط استلمتها</span><b class="num" id="m-instin"></b></div>
+      <div class="flow-row" id="m-paysin-row"><span>ناس سددولك</span><b class="num" id="m-paysin"></b></div>
       <div id="m-borrow">${F0.borrowed.map(d=>dl(d,1)).join('')}</div>
       <div class="flow-row out"><span>مصروفات متسجلة</span><b class="num" id="m-exp"></b></div>
       <div class="flow-row out" id="m-coms-row"><span>التزامات علّمت إنها اتدفعت</span><b class="num" id="m-coms"></b></div>
       <div class="flow-row out" id="m-inst-row"><span>أقساط ديون دفعتها</span><b class="num" id="m-inst"></b></div>
+      <div class="flow-row out" id="m-paysout-row"><span>سداد ديون</span><b class="num" id="m-paysout"></b></div>
       <div id="m-lent">${F0.lentNew.map(d=>dl(d,-1)).join('')}</div>
       <div class="flow-row total"><span>المفروض معاك</span><b class="num" id="m-expct"></b></div>
     </div>
@@ -731,7 +751,7 @@ function reconMonthSheet(){
     const show=(id,v,sign)=>{const row=$('#'+id+'-row',f);if(row)row.hidden=!v;$('#'+id,f).innerHTML=`<bdi dir="ltr">${sign>0?'+':'−'}${money(v)}</bdi>`};
     const upd=()=>{const r=compute(f);
       show('m-inc',r.F.inc,1);show('m-gam',r.F.gamIn,1);show('m-instin',r.F.instIn,1);
-      $('#m-exp',f).innerHTML=`<bdi dir="ltr">−${money(r.F.exp)}</bdi>`;show('m-coms',r.F.coms,-1);show('m-inst',r.F.instOut,-1);
+      $('#m-exp',f).innerHTML=`<bdi dir="ltr">−${money(r.F.exp)}</bdi>`;show('m-coms',r.F.coms,-1);show('m-inst',r.F.instOut,-1);show('m-paysin',r.F.paysIn,1);show('m-paysout',r.F.paysOut,-1);
       $('#m-expct',f).innerHTML=smoney(r.expected);
       const g=$('#rc-gap',f),h=$('#rc-help',f);if(isNaN(r.actual)){g.hidden=true;h.hidden=true;return}
       const gap=r.actual-r.expected;g.hidden=false;g.className='rc-gap '+(Math.abs(gap)<0.5?'ok':gap<0?'bad':'plus');g.innerHTML=gapHtml(gap);h.hidden=!(gap<-0.5)};
@@ -741,7 +761,7 @@ function reconMonthSheet(){
     const st=$('#m-start',f).value||start;const F=monthFlow(st);
     const before=toNum($('#m-before',f).value)||0;const sal=$('#m-sal',f).checked?(toNum($('#m-salv',f).value)||0):0;
     let debtNet=0;$$('[data-debt]',f).forEach(cb=>{if(!cb.checked)return;const d=S.debts.find(x=>x.id===cb.dataset.debt);if(d)debtNet+=d.dir==='owe'?d.amt:-d.amt});
-    const expected=before+sal+F.inc+F.gamIn+F.instIn-F.exp-F.coms-F.instOut+debtNet;
+    const expected=before+sal+F.inc+F.gamIn+F.instIn+F.paysIn-F.exp-F.coms-F.instOut-F.paysOut+debtNet;
     return {start:st,F,expected,actual:toNum($('#f-act',f).value)};
   }
 }
@@ -800,7 +820,7 @@ function debtSheet(d,dir){
   f=>{picker(f,'dir',d.dir,()=>{hint();cxl()});
     const cxl=()=>{const l=$('#cxLbl',f);if(!l)return;l.textContent=f.dataset.dir==='owe'?'الفلوس دي دخلت رصيدي (استلفتها دلوقتي)':'الفلوس دي طلعت من رصيدي (سلّفتها دلوقتي)';const cb=$('#f-cx',f);cb.checked=($('#f-date',f).value||today())===today()};
     const del=$('#delDebt',f);del&&arm(del,()=>{S.debts=S.debts.filter(x=>x.id!==d.id);done('اتمسح')},'اضغط تاني: الرصيد مش هيتغيّر');
-    const u=$('#unpay',f);u&&(u.onclick=()=>{S.cash-=(d.cxSum||0)+sum(Object.values(d.cxPay||{}),x=>x);d.paid=0;d.instPay={};d.cxPay={};d.cxSum=0;done('اتلغى السداد')});
+    const u=$('#unpay',f);u&&(u.onclick=()=>{S.cash-=(d.cxSum||0)+sum(Object.values(d.cxPay||{}),x=>x);d.paid=0;d.instPay={};d.cxPay={};d.cxSum=0;d.pays=[];done('اتلغى السداد')});
     const hint=()=>{const a=toNum($('#f-amt',f).value),i=toNum($('#f-inst',f).value),st=$('#f-istart',f).value||curYM();const h=$('#planHint',f);
       if(!(a>0)||!(i>0)){h.textContent='';return}const left=Math.max(0,a-(d.paid||0));const m=Math.ceil(left/i);
       h.innerHTML=`${nf.format(m)} ${m===1?'قسط':m<=10?'أقساط':'قسط'}، ${f.dataset.dir==='lent'?'يخلص':'تخلص'} في <b>${esc(monthName(ymAdd(st>curYM()?st:curYM(),m-1)))}</b>${f.dataset.dir==='owe'?'، والقسط هيتخصم من المتبقي كل شهر':''}.`};
@@ -812,7 +832,7 @@ function paySheet(d){
     <label class="field"><span>المبلغ اللي اتسدد</span><input class="input amount" id="f-amt" inputmode="decimal" value="${left}"></label>
     ${S.cashSet?`<label class="toggle"><span>${d.dir==='owe'?'اتخصم من رصيدي':'اتضاف لرصيدي'}</span><input type="checkbox" id="f-cx" checked></label>`:''}
     <button class="btn warmb full">${d.dir==='owe'?'سددت':'اتسدد لي'}</button>`,
-  f=>{const a=toNum($('#f-amt',f).value);if(!(a>0))return 'اكتب مبلغ أكبر من صفر.';if(a>left+0.001)return `أكبر من المتبقي (${money(left)}).`;d.paid+=a;
+  f=>{const a=toNum($('#f-amt',f).value);if(!(a>0))return 'اكتب مبلغ أكبر من صفر.';if(a>left+0.001)return `أكبر من المتبقي (${money(left)}).`;d.paid+=a;d.pays=d.pays||[];d.pays.push({date:today(),amt:a});
     const cx=$('#f-cx',f);if(cx&&cx.checked){const v=d.dir==='owe'?-a:a;d.cxSum=(d.cxSum||0)+v;S.cash+=v}
     return {toast:d.paid>=d.amt?'اتسدد بالكامل':'اتسجل سداد جزئي'}},
   f=>$('#f-amt',f).select());
