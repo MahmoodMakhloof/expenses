@@ -42,7 +42,7 @@ function sample(){
   const d=k=>`${ym}-${pad(Math.max(1,Math.min(t,k)))}`;
   const c={food:uid(),net:uid(),tr:uid(),oth:uid()};
   const e=(amt,cat,note,day)=>({id:uid(),amt,cat,note,date:d(day),cx:0});
-  return {v:2,sample:true,salary:15000,payday:25,autoSalary:true,goal:1000,since:ymAdd(ym,-1),
+  return {v:2,sample:true,salary:15000,payday:25,autoSalary:true,goal:1000,since:ym,
     cashSet:true,cash:3800,cashDate:addDays(today(),-6),salaryIn:{},
     cats:[{id:c.food,name:'أكل',icon:'🍽️',limit:4000},{id:c.net,name:'نت',icon:'🌐',limit:450},{id:c.tr,name:'مواصلات',icon:'🚌',limit:1200,carry:true},{id:c.oth,name:'أخرى',icon:'📦',limit:1500}],
     exp:[e(850,c.food,'طلبات البيت',1),e(450,c.net,'باقة النت',2),e(320,c.tr,'بنزين',3),e(640,c.food,'سوبر ماركت',4),e(180,c.tr,'أوبر',5),e(260,c.oth,'هدية عيد ميلاد',6),e(390,c.food,'غدا برا',7),e(410,c.tr,'بنزين',8),e(700,c.food,'خضار وفاكهة',9),e(340,c.oth,'صيدلية',10),e(450,c.tr,'صيانة عربية',11),e(520,c.food,'لحمة',12),e(210,c.food,'قهوة وحلويات',13),e(320,c.tr,'بنزين',3+28)],
@@ -62,11 +62,14 @@ function migrate(s){
   s.exp=s.exp||[];s.inc=s.inc||[];s.recon=s.recon||[];s.debts=s.debts||[];s.coms=s.coms||[];s.cats=s.cats||[];
   s.set=Object.assign({notif:true,nudge:false,reconRemind:true,lock:false,autoBackup:true,lastBackup:0,askedNotif:false},s.set||{});
   s.goal=+s.goal||0;if(s.carryMonth===undefined)s.carryMonth=true;s.payday=+s.payday||0;s.autoSalary=s.autoSalary!==false;s.salaryIn=s.salaryIn||{};
-  s.cashSet=!!s.cashSet;s.cash=+s.cash||0;s.cashDate=s.cashDate||'';
+  s.cashSet=!!s.cashSet;s.cash=+s.cash||0;s.cashDate=s.cashDate||'';s.closed=s.closed||{};
   if(!s.since){const m=s.exp.map(x=>x.date.slice(0,7)).sort()[0];s.since=m&&m<curYM()?m:curYM()}
-  s.coms.forEach(c=>{c.paid=c.paid||[];c.cx=c.cx||{};c.got=c.got||{}});
-  s.debts.forEach(d=>{d.cxPay=d.cxPay||{};d.cxSum=d.cxSum||0;d.instPay=d.instPay||{}});
-  s.v=2;return s;
+  s.coms.forEach(c=>{c.paid=c.paid||[];c.cx=c.cx||{};c.got=c.got||{};c.paidOn=c.paidOn||{};c.gotOn=c.gotOn||{}});
+  s.debts.forEach(d=>{d.cxPay=d.cxPay||{};d.cxSum=d.cxSum||0;d.instPay=d.instPay||{};d.instOn=d.instOn||{};d.pays=d.pays||[];
+    // did the money of this debt actually move this month? older records: yes if it was recorded inside the tracked period
+    if(d.moved===undefined)d.moved=!!d.openCx||(!!d.date&&d.date.slice(0,7)>=s.since);
+    if((s.v||0)<3&&!d.openCx)d.cashLocked=true});
+  s.v=3;return s;
 }
 let S;
 try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){S=null}
@@ -88,11 +91,19 @@ const cashOn=date=>S.cashSet&&(!date||date>=S.cashDate);
 const recLabel=(r,sign)=>{const c=sign<0?catById(r.cat):null;return (sign<0?'مصروف: ':'دخل: ')+(r.note||(c?c.name:'دخل إضافي'))};
 function applyCash(r,sign){if(cashOn(r.date)){r.cx=1;S.cash+=sign*r.amt;why=recLabel(r,sign)}else r.cx=0}
 function revertCash(r,sign){if(r.cx){S.cash-=sign*r.amt;why='إلغاء '+recLabel(r,sign)}r.cx=0}
+/* a new balance (typed in or from a reconciliation) is the truth from now on:
+   nothing recorded before it may move the balance again when edited, deleted or un-ticked */
+function lockAll(){
+  S.exp.forEach(r=>r.cx=0);S.inc.forEach(r=>r.cx=0);
+  S.coms.forEach(c=>{c.cx={};Object.keys(c.got).forEach(k=>c.got[k]=1)});
+  S.debts.forEach(d=>{d.cxPay={};d.cxSum=0;d.openCx=0;d.cashLocked=true});
+}
+const salaryFor=ym=>S.closed[ym]?S.closed[ym].salary:(S.salary||0);
 function creditSalary(){
   if(!S.cashSet||!S.autoSalary||!S.payday||!S.salary||S.sample)return 0;
   let ym=S.cashDate.slice(0,7),added=0;const cur=curYM(),t=today();
   while(ym<=cur){const pd=clampDay(ym,S.payday);
-    if(!S.salaryIn[ym]){if(pd<=S.cashDate)S.salaryIn[ym]=1;else if(pd<=t){S.cash+=S.salary;S.salaryIn[ym]=1;added+=S.salary;why='الراتب'}}
+    if(!S.salaryIn[ym]){if(pd<=S.cashDate)S.salaryIn[ym]=1;else if(pd<=t){const v=salaryFor(ym);S.cash+=v;S.salaryIn[ym]=1;added+=v;why='الراتب'}}
     ym=ymAdd(ym,1)}
   return added;
 }
@@ -106,12 +117,21 @@ const spentIn=(ym,cat)=>sum(S.exp.filter(x=>x.date.startsWith(ym)&&(!cat||x.cat=
 function limitFor(c,ym){const base=catLimit(c);if(!c.carry||!base)return {limit:base,carry:0};
   const prev=ymAdd(ym,-1);if(prev<S.since)return {limit:base,carry:0};
   const carry=Math.max(0,base-spentIn(prev,c.id));return {limit:base+carry,carry}}
-function comActive(c,ym){if(!c.active)return false;if(c.type==='gam'){const i=ymDiff(ym,c.start)+1;return i>=1&&i<=c.months}return true}
+/* a commitment counts in a month if it is active, or if it was already paid that month (pausing/deleting later doesn't refund it) */
+function comActive(c,ym){
+  if((c.paid||[]).includes(ym))return true;
+  if(!c.active)return false;if(c.type==='gam'){const i=ymDiff(ym,c.start)+1;return i>=1&&i<=c.months}return true}
+const comsTotal=ym=>S.closed[ym]?S.closed[ym].coms:sum(S.coms.filter(c=>comActive(c,ym)));
+/* past months keep the salary and commitments they had, so changing them today doesn't rewrite history */
+function freezeMonths(){if(!S.salary)return;const cur=curYM();for(let ym=S.since;ym<cur;ym=ymAdd(ym,1)){if(!S.closed[ym])S.closed[ym]={salary:S.salary||0,coms:sum(S.coms.filter(c=>comActive(c,ym)))}}}
+freezeMonths();
+const lumpPaid=(d,ym)=>sum((d.pays||[]).filter(p=>p.date.startsWith(ym)));
 function instDue(d,ym){
   if(d.dir!=='owe'||!(d.inst>0)||!d.instStart||ym<d.instStart)return 0;
   const pay=(d.instPay||{})[ym];if(pay)return pay;
   if(ym<curYM())return 0;
-  return Math.min(d.inst,Math.max(0,d.amt-d.paid));
+  // a lump payment made this month already covers (part of) this month's installment
+  return Math.max(0,Math.min(d.inst,Math.max(0,d.amt-d.paid+lumpPaid(d,ym)))-lumpPaid(d,ym));
 }
 function debtPlan(d){
   if(!(d.inst>0)||!d.instStart)return null;
@@ -125,7 +145,7 @@ function debtPlan(d){
 function debtFlow(ym){
   let borrowed=0,lentOut=0,lentBack=0,owePaid=0;
   S.debts.forEach(d=>{
-    const inM=d.date&&d.date.startsWith(ym);
+    const inM=d.moved&&d.date&&d.date.startsWith(ym);
     if(d.dir==='owe'&&inM)borrowed+=d.amt;
     if(d.dir==='lent'&&inM)lentOut+=d.amt;
     (d.pays||[]).forEach(p=>{if(!p.date.startsWith(ym))return;if(d.dir==='lent')lentBack+=p.amt;else owePaid+=p.amt});
@@ -133,25 +153,28 @@ function debtFlow(ym){
   });
   return {borrowed,lentOut,lentBack,owePaid,net:borrowed-lentOut+lentBack-owePaid};
 }
-/* leftover of a month (income − commitments − spending) rolls into the next one */
+const gamIn=ym=>sum(S.coms.filter(c=>c.type==='gam'&&c.got&&c.got[ym]),c=>c.amt*c.months);
+/* everything a month adds or takes, except the carry from the month before */
+function monthCore(ym){
+  const spent=spentIn(ym),debtInst=sum(S.debts,d=>instDue(d,ym));
+  const commit=comsTotal(ym)+debtInst,extra=sum(S.inc.filter(x=>x.date.startsWith(ym))),base=salaryFor(ym);
+  const DF=debtFlow(ym),gam=gamIn(ym);
+  return {spent,debtInst,commit,extra,base,DF,gam,net:base+extra+gam-commit-spent+DF.net};
+}
+/* leftover of a month rolls into the next one (a deficit too, so overspending isn't forgotten) */
 function monthRemaining(ym){
   if(remCache.has(ym))return remCache.get(ym);
-  const commit=sum(S.coms.filter(c=>comActive(c,ym)))+sum(S.debts,d=>instDue(d,ym));
-  const v=carryFor(ym)+(S.salary||0)+sum(S.inc.filter(x=>x.date.startsWith(ym)))-commit-spentIn(ym)+debtFlow(ym).net;
-  remCache.set(ym,v);return v;
+  const v=carryFor(ym)+monthCore(ym).net;remCache.set(ym,v);return v;
 }
-function carryFor(ym){if(!S.carryMonth)return 0;const prev=ymAdd(ym,-1);if(prev<S.since)return 0;return Math.max(0,monthRemaining(prev))}
+function carryFor(ym){if(!S.carryMonth)return 0;const prev=ymAdd(ym,-1);if(prev<S.since)return 0;return monthRemaining(prev)}
 function calc(ym){
   const exp=S.exp.filter(x=>x.date.startsWith(ym));
-  const spent=sum(exp);
-  const unknown=sum(exp.filter(x=>x.cat===UNK));
-  const coms=S.coms.filter(c=>comActive(c,ym));
-  const debtInst=sum(S.debts,d=>instDue(d,ym));
-  const commit=sum(coms)+debtInst;
-  const extra=sum(S.inc.filter(x=>x.date.startsWith(ym)));
-  const carry=carryFor(ym);const base=S.salary||0, salary=base+extra+carry, goal=S.goal||0;
-  const DF=debtFlow(ym);
-  const remaining=salary-commit-spent+DF.net;
+  const M=monthCore(ym);
+  const spent=M.spent,unknown=sum(exp.filter(x=>x.cat===UNK));
+  const coms=S.coms.filter(c=>comActive(c,ym)&&!c.hidden||(c.paid||[]).includes(ym));
+  const debtInst=M.debtInst,commit=M.commit,extra=M.extra,DF=M.DF,gam=M.gam;
+  const carry=carryFor(ym);const base=M.base, salary=base+extra+carry, goal=S.goal||0;
+  const remaining=carry+M.net;
   const days=dim(ym), cur=curYM();
   const day=ym<cur?days:ym>cur?0:+today().slice(8);
   const daysLeft=Math.max(0,days-day+(ym===cur?1:0));
@@ -159,7 +182,7 @@ function calc(ym){
   const spendable=remaining-goal;
   const allowed=daysLeft?Math.max(0,spendable)/daysLeft:0;
   const forecastSpent=ym<cur?spent:avg*days;
-  const forecastLeft=salary-commit-forecastSpent;
+  const forecastLeft=remaining+spent-forecastSpent;
   const byCat=S.cats.map((c,i)=>{const ce=exp.filter(x=>x.cat===c.id);const s=sum(ce);const L=limitFor(c,ym);
     const subs=(c.subs||[]).map(sb=>{const sp=sum(ce.filter(x=>x.sub===sb.id));return {...sb,spent:sp,ratio:sb.limit?sp/sb.limit:0}});
     const general=sum(ce.filter(x=>!x.sub||!subs.some(sb=>sb.id===x.sub)));
@@ -167,8 +190,8 @@ function calc(ym){
   if(unknown)byCat.push({...catById(UNK),i:-1,limit:0,carryIn:0,spent:unknown,ratio:0,subs:[],general:0});
   const owe=sum(S.debts.filter(d=>d.dir==='owe'),d=>Math.max(0,d.amt-d.paid));
   const lent=sum(S.debts.filter(d=>d.dir==='lent'),d=>Math.max(0,d.amt-d.paid));
-  return {DF,carry,exp,spent,unknown,commit,debtInst,coms,base,extra,salary,goal,remaining,spendable,days,day,daysLeft,avg,allowed,forecastSpent,forecastLeft,byCat,owe,lent,net:lent-owe,
-    used:salary?(spent+commit)/salary:0};
+  return {DF,gam,carry,exp,spent,unknown,commit,debtInst,coms,base,extra,salary,goal,remaining,spendable,days,day,daysLeft,avg,allowed,forecastSpent,forecastLeft,byCat,owe,lent,net:lent-owe,
+    used:salary>0?(spent+commit)/salary:0};
 }
 function payoffInfo(){
   const owe=S.debts.filter(d=>d.dir==='owe'&&d.paid<d.amt);
@@ -187,8 +210,8 @@ function dailyRate(){
   const ym=curYM(),R=calc(ym);
   const budget=sum(S.cats,c=>limitFor(c,ym).limit);
   // big one-off purchases (over 10% of monthly income) are not daily spending
-  const cap=Math.max(1,(R.salary||0)*0.1);
-  const variable=sum(R.exp.filter(x=>x.cat!==UNK&&(!R.salary||x.amt<=cap)));
+  const inc=R.base+R.extra;const cap=Math.max(1,inc*0.1);
+  const variable=sum(R.exp.filter(x=>x.cat!==UNK&&(!inc||x.amt<=cap)));
   if(R.day>=5&&variable>0)return variable/R.day;
   if(budget>0)return budget/R.days;
   return R.day?variable/R.day:0;
@@ -269,9 +292,9 @@ function renderHome(){
   <div class="hero">
     <div class="row between"><span class="lbl">المتبقي من دخل ${isCur?'الشهر':esc(monthName(UI.ym))} حسب المتسجل</span>
       <button class="salary-btn lbl" data-act="salary">الراتب: <span class="num">${money(R.base)}</span>${R.extra?` + <span class="num">${money(R.extra)}</span>`:''} ✎</button></div>
-    ${R.carry?`<span class="lbl carry-lbl">+ <span class="num">${money(R.carry)}</span> مرحّلين من ${esc(monthName(ymAdd(UI.ym,-1)))}</span>`:''}
+    ${R.carry?`<span class="lbl carry-lbl">${R.carry>0?'+':'−'} <span class="num">${money(Math.abs(R.carry))}</span> ${R.carry>0?'مرحّلين':'عجز مرحّل'} من ${esc(monthName(ymAdd(UI.ym,-1)))}</span>`:''}
     <div class="big num">${smoney(R.remaining)}<span>${CUR}</span></div>
-    ${R.DF.net?`<span class="lbl carry-lbl">${[R.DF.lentOut?`سلّفت ${money(R.DF.lentOut)}`:'',R.DF.borrowed?`استلفت ${money(R.DF.borrowed)}`:'',R.DF.lentBack?`رجعلك ${money(R.DF.lentBack)}`:'',R.DF.owePaid?`سددت ${money(R.DF.owePaid)}`:''].filter(Boolean).join(' · ')}</span>`:''}
+    ${R.DF.net||R.gam?`<span class="lbl carry-lbl">${[R.gam?`قبض جمعية ${money(R.gam)}`:'',R.DF.lentOut?`سلّفت ${money(R.DF.lentOut)}`:'',R.DF.borrowed?`استلفت ${money(R.DF.borrowed)}`:'',R.DF.lentBack?`رجعلك ${money(R.DF.lentBack)}`:'',R.DF.owePaid?`سددت ${money(R.DF.owePaid)}`:''].filter(Boolean).join(' · ')}</span>`:''}
     <div class="bar" role="img" aria-label="استهلكت ${usedPct}% من الدخل"><i class="${usedPct>100?'over':''}" style="width:${Math.min(100,usedPct)}%"></i></div>
     <div class="split">
       <div><b class="num">${money(R.spent)}</b><small>مصروفات</small></div>
@@ -279,8 +302,6 @@ function renderHome(){
       <div><b class="num">${R.goal?money(R.goal):usedPct+'%'}</b><small>${R.goal?'هدف ادخار':'من الدخل'}</small></div>
     </div>
   </div>
-  ${(()=>{if(!isCur||!S.cashSet)return '';const unpaid=sum(R.coms.filter(c=>!(c.paid||[]).includes(UI.ym)))+sum(S.debts,d=>d.dir==='owe'&&!(d.instPay||{})[UI.ym]?instDue(d,UI.ym):0);R.gapCash=R.remaining+unpaid-S.cash;return ''})()}
-  ${isCur&&S.cashSet&&R.gapCash>Math.max(500,R.salary*0.05)?`<div class="gap-hint"><p>حسب المتسجل المفروض يفضل معاك <b class="num">${money(R.remaining)}</b> من دخل الشهر، لكن رصيدك <b class="num">${money(S.cash)}</b>. الفرق <b class="num">${money(R.gapCash)}</b> ${CUR} غالبًا مصاريف متسجلتش.</p><button type="button" class="btn small-btn" data-act="reconMonth">اعمل جرد الشهر</button></div>`:''}
   ${!R.base?`<div class="banner"><p>سجّل راتبك ويوم القبض علشان التحليلات تتحسب صح.</p><button type="button" data-act="salary">سجّل الراتب</button></div>`:''}
   ${isCur?walletCard(R,F):''}
   ${alerts.length?`<div class="alerts" role="status">${alerts.map(a=>`<div class="alert ${a.k}"><span class="dot"></span><div>${a.h}</div></div>`).join('')}</div>`:''}
@@ -337,7 +358,7 @@ function walletCard(R,F){
     ${R.lent?`<p class="small muted" style="margin:0">مش محسوب في التوقع: <span class="num">${money(R.lent)}</span> ${CUR} ليك عند الناس.</p>`:''}
     ${upcoming.length?`<details class="upc"><summary>الجاي في أسبوعين (${nf.format(upcoming.length)})</summary><ul>${upcoming.map(e=>`<li><span>${esc(e.label)}${e.late?' <b class="late">متأخر</b>':''}</span><span class="muted small">${esc(dayName(e.date))}</span><b class="num ${e.amt>0?'pos':''}">${e.amt>0?'+':''}${money(e.amt)}</b></li>`).join('')}</ul></details>`:''}
     ${(S.cashLog||[]).length?`<details class="upc"><summary>حركات الرصيد (${nf.format(S.cashLog.length)})</summary><ul class="clog">${S.cashLog.slice(-20).reverse().map(l=>{const d=new Date(l.t);return `<li><span>${esc(l.why)}<small class="muted"> · ${esc(dayName(iso(d)))} ${pad(d.getHours())}:${pad(d.getMinutes())}</small></span><b class="num ${l.d>0?'pos':''}"><bdi dir="ltr">${l.d>0?'+':'−'}${money(Math.abs(l.d))}</bdi></b><span class="small muted num">${money(l.bal)}</span></li>`}).join('')}</ul></details>`:''}
-    <p class="small muted" style="margin:0">آخر جرد: ${esc(dayName(since))}</p>
+    <p class="small muted" style="margin:0">الرصيد ده حسب اللي اتسجل. لو اللي معاك فعلًا مختلف، اعمل جرد. آخر جرد: ${esc(dayName(since))}</p>
   </div>`;
 }
 function spark(F){
@@ -480,7 +501,7 @@ function renderDebts(){
 /* ---------- commitments ---------- */
 function renderCommit(){
   const R=calc(UI.ym), ym=UI.ym;
-  const gams=S.coms.filter(c=>c.type==='gam'), bills=S.coms.filter(c=>c.type==='bill');
+  const gams=S.coms.filter(c=>c.type==='gam'&&!c.hidden), bills=S.coms.filter(c=>c.type==='bill'&&!c.hidden);
   const check=(id,paid,label)=>`<button class="check" data-paid="${id}" aria-pressed="${paid}" aria-label="${label}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg></button>`;
   const gRow=c=>{const i=ymDiff(ym,c.start)+1;const on=comActive(c,ym);const paid=(c.paid||[]).includes(ym);const turnNow=on&&i===c.turn;
     const st=!c.active?'<span class="chip done">موقوفة</span>':i<1?'<span class="chip done">لسه مابدأتش</span>':i>c.months?'<span class="chip done">خلصت</span>':turnNow?'<span class="chip warm">دورك تقبض</span>':`<span class="chip ok">شهر ${nf.format(i)} من ${nf.format(c.months)}</span>`;
@@ -553,13 +574,13 @@ function txSheet(opts={}){
   f=>{const a=toNum($('#f-amt',f).value);if(!(a>0))return 'اكتب مبلغ أكبر من صفر.';
     const date=$('#f-date',f).value||today(),note=$('#f-note',f).value.trim();kind=f.dataset.kind||kind;
     if(kind==='inc'){
-      if(edit){revertCash(edit,1);Object.assign(edit,{amt:a,note,date});applyCash(edit,1)}
+      if(edit){const had=edit.cx,old=edit.date;revertCash(edit,1);Object.assign(edit,{amt:a,note,date});if(had||(S.cashSet&&old<S.cashDate&&date>=S.cashDate))applyCash(edit,1)}
       else{const r={id:uid(),amt:a,note,date};applyCash(r,1);S.inc.push(r)}
       UI.ym=date.slice(0,7);return {toast:'اتسجل الدخل'};
     }
     if(!f.dataset.cat)return 'اختار البند.';
     const cc=catById(f.dataset.cat);const sub=cc&&cc.subs&&cc.subs.length&&f.dataset.sub?f.dataset.sub:undefined;
-    if(edit){const wasUnk=edit.cat===UNK;if(!wasUnk)revertCash(edit,-1);Object.assign(edit,{amt:a,cat:f.dataset.cat,sub,note,date});if(!wasUnk)applyCash(edit,-1);if(!sub)delete edit.sub}
+    if(edit){const unk=edit.cat===UNK,had=edit.cx&&!unk,old=edit.date;revertCash(edit,-1);Object.assign(edit,{amt:a,cat:f.dataset.cat,sub,note,date});if(had||(!unk&&S.cashSet&&old<S.cashDate&&date>=S.cashDate))applyCash(edit,-1);else edit.cx=0;if(!sub)delete edit.sub}
     else{const r={id:uid(),amt:a,cat:f.dataset.cat,sub,note,date};if(!sub)delete r.sub;applyCash(r,-1);S.exp.push(r)}
     UI.ym=date.slice(0,7);
     const c=calc(UI.ym).byCat.find(x=>x.id===f.dataset.cat);
@@ -570,7 +591,9 @@ function txSheet(opts={}){
       picker(f,'sub',src.sub&&list.some(x=>x.id===src.sub)?src.sub:(list[0]?list[0].id:''))};
     const hint=()=>{const h=$('#cashHint',f);const d=$('#f-date',f).value||today();const k=f.dataset.kind||kind;
       if(edit&&edit.cat===UNK){h.textContent='ده فرق جرد. لو افتكرت هو اتصرف في إيه، غيّر البند. رصيدك مش هيتغيّر.';return}
-      h.textContent=S.cashSet?(cashOn(d)?(k==='inc'?'هيتضاف لرصيدك.':'هيتخصم من رصيدك.'):'التاريخ قبل آخر تسجيل للرصيد، فمش هيأثر عليه.'):''};
+      if(!S.cashSet){h.textContent='';return}
+      const will=edit?(edit.cx?cashOn(d):(edit.date<S.cashDate&&d>=S.cashDate)):cashOn(d);
+      h.textContent=will?(k==='inc'?(edit?'التعديل هيتظبط على رصيدك.':'هيتضاف لرصيدك.'):(edit?'التعديل هيتظبط على رصيدك.':'هيتخصم من رصيدك.')):(edit?'التعديل مش هيأثر على رصيدك (الحركة دي قبل آخر تسجيل أو جرد للرصيد).':'التاريخ قبل آخر تسجيل للرصيد، فمش هيأثر عليه.')};
     const mode=()=>{const k=f.dataset.kind||kind;$('#catBlock',f).hidden=k==='inc';$('#quick',f).hidden=k==='inc'||!quick.length;hint()};
     picker(f,'cat',src.cat||opts.cat||S.cats[0]?.id,subs);subs();
     if(!edit)picker(f,'kind',kind,mode);else f.dataset.kind=kind;
@@ -630,9 +653,17 @@ function salarySheet(){
   openSheet('الراتب ويوم القبض',`<label class="field"><span>صافي الراتب (${CUR})</span><input class="input amount" id="f-sal" inputmode="decimal" value="${S.salary||''}" placeholder="0"></label>
     <label class="field"><span>يوم القبض في الشهر</span><input class="input" id="f-pay" inputmode="numeric" value="${S.payday||''}" placeholder="مثلاً 25"></label>
     <label class="toggle"><span>ضيف الراتب لرصيدي تلقائيًا يوم القبض</span><input type="checkbox" id="f-auto" ${S.autoSalary?'checked':''}></label>
+    ${S.cashSet&&!S.salaryIn[curYM()]?`<label class="toggle" id="f-nowrow" hidden><span>يوم القبض عدّى الشهر ده. ضيف راتب الشهر ده لرصيدي دلوقتي<br><small class="muted">سيبها فاضية لو قبضته وهو محسوب في رصيدك خلاص</small></span><input type="checkbox" id="f-now"></label>`:''}
     <button class="btn full">حفظ</button>`,
   f=>{const a=toNum($('#f-sal',f).value);if(!(a>=0))return 'اكتب رقم صحيح.';const pv=$('#f-pay',f).value.trim();const p=pv?Math.round(toNum(pv)):0;if(pv&&!(p>=1&&p<=31))return 'يوم القبض بين 1 و 31.';
-    S.salary=a;S.payday=p;S.autoSalary=$('#f-auto',f).checked;if(S.cashSet&&p&&clampDay(curYM(),p)<=today()&&!S.salaryIn[curYM()])S.salaryIn[curYM()]=1;return {toast:'اتحفظ'}},f=>$('#f-sal',f).select());
+    Object.values(S.closed).forEach(m=>{if(!m.salary)m.salary=a});
+    S.salary=a;S.payday=p;S.autoSalary=$('#f-auto',f).checked;freezeMonths();
+    if(S.cashSet&&p){const cur=curYM();
+      // months already passed are already in the balance: never credit them after the fact
+      for(let ym=(S.cashDate||today()).slice(0,7);ym<cur;ym=ymAdd(ym,1))S.salaryIn[ym]=1;
+      if(!S.salaryIn[cur]&&clampDay(cur,p)<=today()){const now=$('#f-now',f);if(now&&now.checked){S.cash+=a;why='الراتب'}S.salaryIn[cur]=1}}
+    return {toast:'اتحفظ'}},
+  f=>{$('#f-sal',f).select();const row=$('#f-nowrow',f);if(row){const upd=()=>{const p=Math.round(toNum($('#f-pay',f).value));row.hidden=!(p>=1&&p<=31&&clampDay(curYM(),p)<=today())};$('#f-pay',f).addEventListener('input',upd);upd()}});
 }
 function cashSheet(){
   openSheet(S.cashSet?'عدّل رصيدك':'سجّل رصيدك',`<p class="muted" style="margin:0">اكتب الفلوس اللي معاك كلها دلوقتي: كاش + بنك + محافظ.</p>
@@ -641,7 +672,7 @@ function cashSheet(){
     <button class="btn full">حفظ</button>`,
   f=>{const a=toNum($('#f-cash',f).value);if(isNaN(a))return 'اكتب رقم.';
     const pi=$('#f-pay',f);if(pi&&pi.value.trim()){const p=Math.round(toNum(pi.value));if(!(p>=1&&p<=31))return 'يوم القبض بين 1 و 31.';S.payday=p}
-    S.cash=a;S.cashSet=true;S.cashDate=today();S.sample=false;why='تعديل الرصيد يدويًا';
+    lockAll();S.cash=a;S.cashSet=true;S.cashDate=today();S.sample=false;why='تعديل الرصيد يدويًا';
     if(S.payday&&clampDay(curYM(),S.payday)<=today())S.salaryIn[curYM()]=1;
     if(!S.recon.length)S.recon.push({id:uid(),date:today(),expected:a,actual:a,gap:0,start:true});
     return {toast:'اتسجل رصيدك. من هنا كل حركة هتتخصم أو تتضاف عليه.'}},f=>$('#f-cash',f).select());
@@ -664,14 +695,14 @@ function monthFlow(start){
   const exp=sum(S.exp.filter(x=>inP(x.date)));
   const inc=sum(S.inc.filter(x=>inP(x.date)));
   let coms=0,gamIn=0;S.coms.forEach(c=>months.forEach(ym=>{
-    const dd=c.due?clampDay(ym,c.due):null;const within=dd?inP(dd):ym===curYM();
-    if((c.paid||[]).includes(ym)&&within)coms+=c.amt;
-    if(c.got&&c.got[ym]&&within)gamIn+=c.amt*c.months}));
+    const dd=c.due?clampDay(ym,c.due):null;const legacy=dd?inP(dd):ym===curYM();
+    if((c.paid||[]).includes(ym)&&(c.paidOn&&c.paidOn[ym]?inP(c.paidOn[ym]):legacy))coms+=c.amt;
+    if(c.got&&c.got[ym]&&(c.gotOn&&c.gotOn[ym]?inP(c.gotOn[ym]):legacy))gamIn+=c.amt*c.months}));
   let instOut=0,instIn=0;S.debts.forEach(d=>months.forEach(ym=>{const a=(d.instPay||{})[ym];if(!a)return;
-    const dd=clampDay(ym,d.instDay||S.payday||1);if(!(inP(dd)||ym===curYM()))return;if(d.dir==='owe')instOut+=a;else instIn+=a}));
+    const on=d.instOn&&d.instOn[ym];if(on?!inP(on):!(inP(clampDay(ym,d.instDay||S.payday||1))||ym===curYM()))return;if(d.dir==='owe')instOut+=a;else instIn+=a}));
   let paysIn=0,paysOut=0;S.debts.forEach(d=>(d.pays||[]).forEach(p=>{if(!inP(p.date))return;if(d.dir==='lent')paysIn+=p.amt;else paysOut+=p.amt}));
-  const lentNew=S.debts.filter(d=>d.dir==='lent'&&inP(d.date));
-  const borrowed=S.debts.filter(d=>d.dir==='owe'&&inP(d.date));
+  const lentNew=S.debts.filter(d=>d.dir==='lent'&&d.moved&&inP(d.date));
+  const borrowed=S.debts.filter(d=>d.dir==='owe'&&d.moved&&inP(d.date));
   return {exp,inc,coms,gamIn,instOut,instIn,paysIn,paysOut,lentNew,borrowed};
 }
 /* the "help me remember" block shared by both modes */
@@ -703,7 +734,7 @@ function closeRecon(actual,expected,since,label){
   if(gap<-0.5)S.exp.push({id:uid(),amt:-gap,cat:UNK,note:`فرق ${label} من ${shortDate(since)}`,date:today(),cx:0});
   else if(gap>0.5)S.inc.push({id:uid(),amt:gap,note:`زيادة في ${label} من ${shortDate(since)}`,date:today(),cx:0});
   S.recon.push({id:uid(),date:today(),since,expected,actual,gap});
-  S.cash=actual;S.cashSet=true;if(!S.cashDate)S.cashDate=today();why=label;
+  lockAll();S.cash=actual;S.cashSet=true;S.cashDate=today();why=label;
   return {toast:Math.abs(gap)<0.5?'مظبوط بالمليم. مفيش فلوس ضايعة.':gap<0?`اتسجل ${money(-gap)} مش معروف. لو افتكرت، انقله لبنده.`:`معاك ${money(gap)} زيادة، اتسجلت دخل.`};
 }
 const modeSeg=m=>`<div class="seg" role="group" aria-label="نوع الجرد"><button type="button" data-rmode="month" aria-pressed="${m==='month'}">من يوم القبض</button><button type="button" data-rmode="since" aria-pressed="${m==='since'}">من آخر جرد</button></div>`;
@@ -819,7 +850,7 @@ function debtSheet(d,dir){
     <label class="field"><span>الأقساط تبدأ شهر</span><input class="input" type="month" id="f-istart" value="${d.instStart||curYM()}"></label></div>
     <label class="field"><span>يوم دفع القسط (اختياري)</span><input class="input" id="f-iday" inputmode="numeric" value="${d.instDay||''}" placeholder="${S.payday?'يوم القبض ('+S.payday+')':'مثلاً 1'}"></label>
     <p class="small muted" id="planHint" style="margin:-4px 0 0"></p>
-    ${isNew&&S.cashSet?`<label class="toggle"><span id="cxLbl"></span><input type="checkbox" id="f-cx"></label>`:''}
+    <label class="toggle"><span><span id="cxLbl"></span><br><small class="muted">شيلها لو ده دين قديم بتسجّله بس، علشان ميتحسبش على الشهر ده${S.cashSet?' ولا على رصيدك':''}</small></span><input type="checkbox" id="f-moved" ${isNew?'':(d.moved?'checked':'')}></label>
     <button class="btn warmb full">${isNew?'أضف':'حفظ'}</button>
     ${!isNew?`<div class="btn-row">${d.paid>0?'<button type="button" class="btn ghost" id="unpay">إلغاء السداد</button>':''}<button type="button" class="btn dangerb" id="delDebt">مسح</button></div>`:''}`,
   f=>{const name=$('#f-name',f).value.trim(),a=toNum($('#f-amt',f).value);if(!name)return 'اكتب الاسم.';if(!(a>0))return 'اكتب مبلغ أكبر من صفر.';
@@ -827,16 +858,23 @@ function debtSheet(d,dir){
     const ist=$('#f-istart',f).value||curYM();if(inst&&!/^\d{4}-\d{2}$/.test(ist))return 'اختار شهر بداية الأقساط.';
     const idv=$('#f-iday',f).value.trim(),iday=idv?Math.round(toNum(idv)):0;if(idv&&!(iday>=1&&iday<=31))return 'يوم القسط بين 1 و 31.';
     const v={dir:f.dataset.dir,name,amt:a,note:$('#f-note',f).value.trim(),date:$('#f-date',f).value||today(),due:$('#f-due',f).value,inst,instStart:inst?ist:'',instDay:iday||0};
-    if(isNew){const nd={id:uid(),paid:0,cxPay:{},cxSum:0,instPay:{},...v};const cx=$('#f-cx',f);if(cx&&cx.checked){nd.openCx=v.dir==='owe'?a:-a;S.cash+=nd.openCx;why=(v.dir==='owe'?'استلفت من ':'سلّفت ')+name}S.debts.push(nd)}
-    else{Object.assign(d,v);d.paid=Math.min(d.paid,a)}UI.debtDir=v.dir;return {toast:'اتحفظ'}},
-  f=>{picker(f,'dir',d.dir,()=>{hint();cxl()});
-    const cxl=()=>{const l=$('#cxLbl',f);if(!l)return;l.textContent=f.dataset.dir==='owe'?'الفلوس دي دخلت رصيدي (استلفتها دلوقتي)':'الفلوس دي طلعت من رصيدي (سلّفتها دلوقتي)';const cb=$('#f-cx',f);cb.checked=($('#f-date',f).value||today())===today()};
-    const del=$('#delDebt',f);del&&arm(del,()=>{S.debts=S.debts.filter(x=>x.id!==d.id);done('اتمسح')},'اضغط تاني: الرصيد مش هيتغيّر');
-    const u=$('#unpay',f);u&&(u.onclick=()=>{S.cash-=(d.cxSum||0)+sum(Object.values(d.cxPay||{}),x=>x);why='إلغاء سداد '+d.name;d.paid=0;d.instPay={};d.cxPay={};d.cxSum=0;d.pays=[];done('اتلغى السداد')});
+    if(!isNew&&a<d.paid)return `المبلغ أقل من اللي اتسدد فعلًا (${money(d.paid)}). لو فيه سداد غلط، استخدم "إلغاء السداد" الأول.`;
+    v.moved=$('#f-moved',f).checked;
+    const t=isNew?{id:uid(),paid:0,cxPay:{},cxSum:0,instPay:{},instOn:{},pays:[],openCx:0}:d;
+    Object.assign(t,v);t.paid=Math.min(t.paid,a);
+    // the balance follows the "money moved" switch (until a new balance/reconciliation locks it)
+    if(S.cashSet&&!t.cashLocked){const target=v.moved&&cashOn(v.date)?(v.dir==='owe'?a:-a):0;const delta=target-(t.openCx||0);
+      if(delta){S.cash+=delta;why=(v.dir==='owe'?'استلفت من ':'سلّفت ')+name+(isNew?'':' (تعديل)')}t.openCx=target}
+    if(isNew)S.debts.push(t);UI.debtDir=v.dir;return {toast:'اتحفظ'}},
+  f=>{picker(f,'dir',d.dir,()=>{hint();cxl(false)});
+    const cxl=(init)=>{const l=$('#cxLbl',f);l.textContent=f.dataset.dir==='owe'?'الفلوس دي دخلت جيبي فعلًا (استلفتها في التاريخ ده)':'الفلوس دي طلعت من جيبي فعلًا (سلّفتها في التاريخ ده)';if(isNew&&init!==false)$('#f-moved',f).checked=($('#f-date',f).value||today())>=today().slice(0,7)+'-01'};
+    const e=d.openCx||0;
+    const del=$('#delDebt',f);del&&arm(del,()=>{if(e){S.cash-=e;why='مسح دين '+d.name}S.debts=S.debts.filter(x=>x.id!==d.id);done(e?`اتمسح، ورصيدك رجع زي ما كان قبل ما تسجّله (${e>0?'−':'+'}${money(Math.abs(e))})`:'اتمسح')},e?`اضغط تاني: هيتشال ويرجع ${money(Math.abs(e))} ${e>0?'من':'لـ'} رصيدك`:'اضغط تاني: الرصيد مش هيتغيّر');
+    const u=$('#unpay',f);u&&(u.onclick=()=>{S.cash-=(d.cxSum||0)+sum(Object.values(d.cxPay||{}),x=>x);why='إلغاء سداد '+d.name;d.paid=0;d.instPay={};d.instOn={};d.cxPay={};d.cxSum=0;d.pays=[];done('اتلغى السداد')});
     const hint=()=>{const a=toNum($('#f-amt',f).value),i=toNum($('#f-inst',f).value),st=$('#f-istart',f).value||curYM();const h=$('#planHint',f);
       if(!(a>0)||!(i>0)){h.textContent='';return}const left=Math.max(0,a-(d.paid||0));const m=Math.ceil(left/i);
       h.innerHTML=`${nf.format(m)} ${m===1?'قسط':m<=10?'أقساط':'قسط'}، ${f.dataset.dir==='lent'?'يخلص':'تخلص'} في <b>${esc(monthName(ymAdd(st>curYM()?st:curYM(),m-1)))}</b>${f.dataset.dir==='owe'?'، والقسط هيتخصم من المتبقي كل شهر':''}.`};
-    ['f-amt','f-inst','f-istart'].forEach(id=>$('#'+id,f).addEventListener('input',hint));$('#f-date',f).addEventListener('input',cxl);hint();cxl()});
+    ['f-amt','f-inst','f-istart'].forEach(id=>$('#'+id,f).addEventListener('input',hint));$('#f-date',f).addEventListener('input',()=>cxl());hint();cxl(isNew)});
 }
 function paySheet(d){
   const left=d.amt-d.paid;
@@ -867,8 +905,9 @@ function comSheet(c,type){
     if(g){const m=Math.round(toNum($('#f-months',f).value)),t=Math.round(toNum($('#f-turn',f).value)),s=$('#f-start',f).value;
       if(!(m>=1))return 'عدد الشهور لازم يكون 1 أو أكتر.';if(!(t>=1&&t<=m))return `دورك لازم يكون بين 1 و ${m}.`;if(!/^\d{4}-\d{2}$/.test(s))return 'اختار شهر البداية.';Object.assign(v,{months:m,turn:t,start:s})}
     const dv=$('#f-due',f).value.trim();const dd=dv?Math.round(toNum(dv)):'';if(dv&&!(dd>=1&&dd<=31))return 'يوم الدفع بين 1 و 31.';v.due=dd;
-    if(isNew)S.coms.push({id:uid(),type:c.type,paid:[],cx:{},got:{},...v});else Object.assign(c,v);return {toast:'اتحفظ'}},
-  f=>{const d=$('#delCom',f);d&&arm(d,()=>{S.coms=S.coms.filter(x=>x.id!==c.id);done('اتمسح')},'اضغط تاني: الرصيد مش هيتغيّر')});
+    if(isNew)S.coms.push({id:uid(),type:c.type,paid:[],cx:{},got:{},paidOn:{},gotOn:{},...v});else Object.assign(c,v);return {toast:'اتحفظ'}},
+  // deleting keeps it in past months (what was paid stays paid); it just stops from now on
+  f=>{const d=$('#delCom',f);d&&arm(d,()=>{c.hidden=true;c.active=false;done('اتشالت من الشهور الجاية، واللي اتدفع قبل كده فضل محسوب')},'اضغط تاني: هتتشال من الشهور الجاية')});
 }
 function freshSheet(){
   openSheet('ابدأ ببياناتك',`<p class="muted" style="margin:0">هنمسح البيانات التجريبية ونبدأ ببنود أكل ونت ومواصلات وأخرى فاضية.</p>
@@ -982,16 +1021,17 @@ document.addEventListener('click',e=>{
   if(ds.editDebt){debtSheet(S.debts.find(d=>d.id===ds.editDebt));return}
   if(ds.editCom){comSheet(S.coms.find(c=>c.id===ds.editCom));return}
   if(ds.inst||ds.paid||ds.got)snap();
-  if(ds.inst){const d=S.debts.find(x=>x.id===ds.inst),cur=curYM();why=(d.instPay[cur]?'إلغاء قسط ':'قسط ')+d.name;
-    if(d.instPay[cur]){d.paid=Math.max(0,d.paid-d.instPay[cur]);S.cash-=(d.cxPay[cur]||0);delete d.cxPay[cur];delete d.instPay[cur];done('اتلغى قسط الشهر')}
-    else{const a=Math.min(d.inst,d.amt-d.paid);d.instPay[cur]=a;d.paid+=a;if(S.cashSet){const v=d.dir==='owe'?-a:a;d.cxPay[cur]=v;S.cash+=v}done(d.paid>=d.amt?'اتسدد الدين بالكامل':'اتسجل القسط')}return}
+  if(ds.inst){const d=S.debts.find(x=>x.id===ds.inst),cur=curYM();d.instOn=d.instOn||{};d.cxPay=d.cxPay||{};why=(d.instPay[cur]?'إلغاء قسط ':'قسط ')+d.name;
+    if(d.instPay[cur]){d.paid=Math.max(0,d.paid-d.instPay[cur]);S.cash-=(d.cxPay[cur]||0);delete d.cxPay[cur];delete d.instPay[cur];delete d.instOn[cur];done('اتلغى قسط الشهر')}
+    else{const a=Math.min(d.inst,d.amt-d.paid);d.instPay[cur]=a;d.instOn[cur]=today();d.paid+=a;if(S.cashSet){const v=d.dir==='owe'?-a:a;d.cxPay[cur]=v;S.cash+=v}done(d.paid>=d.amt?'اتسدد الدين بالكامل':'اتسجل القسط')}return}
   if(ds.paid){const c=S.coms.find(x=>x.id===ds.paid),ym=UI.ym;const k=c.paid.indexOf(ym);
-    if(k>=0){c.paid.splice(k,1);if(c.cx[ym]){const v=c.cx[ym];S.cash+=v;delete c.cx[ym];why='إلغاء علامة '+c.name;done(`رجع ${money(v)} لرصيدك`)}
+    c.paidOn=c.paidOn||{};c.cx=c.cx||{};
+    if(k>=0){c.paid.splice(k,1);delete c.paidOn[ym];if(c.cx[ym]){const v=c.cx[ym];S.cash+=v;delete c.cx[ym];why='إلغاء علامة '+c.name;done(`رجع ${money(v)} لرصيدك`)}
       else done(S.cashSet?`اتشالت العلامة. ${c.name} مكانتش اتخصمت من رصيدك (اتعلّمت قبل ما تسجّل رصيدك)، فرصيدك زي ما هو.`:'')}
-    else{c.paid.push(ym);if(S.cashSet&&ym===curYM()){c.cx[ym]=c.amt;S.cash-=c.amt;why=c.name}done(S.cashSet&&ym===curYM()?`اتخصم ${money(c.amt)} من رصيدك`:'')}return}
-  if(ds.got){const c=S.coms.find(x=>x.id===ds.got),ym=UI.ym,v=c.amt*c.months;
+    else{c.paid.push(ym);c.paidOn[ym]=today();if(S.cashSet&&ym===curYM()){c.cx[ym]=c.amt;S.cash-=c.amt;why=c.name}done(S.cashSet&&ym===curYM()?`اتخصم ${money(c.amt)} من رصيدك`:'')}return}
+  if(ds.got){const c=S.coms.find(x=>x.id===ds.got),ym=UI.ym,v=c.amt*c.months;c.got=c.got||{};c.gotOn=c.gotOn||{};
     why=(c.got[ym]?'إلغاء قبض ':'قبض ')+c.name;
-    if(c.got[ym]){if(c.got[ym]>1)S.cash-=c.got[ym];delete c.got[ym];done()}else{c.got[ym]=S.cashSet?v:1;if(S.cashSet)S.cash+=v;done(S.cashSet?`اتضاف ${money(v)} لرصيدك`:'')}return}
+    if(c.got[ym]){if(c.got[ym]>1)S.cash-=c.got[ym];delete c.got[ym];delete c.gotOn[ym];done()}else{c.got[ym]=S.cashSet?v:1;c.gotOn[ym]=today();if(S.cashSet)S.cash+=v;done(S.cashSet?`اتضاف ${money(v)} لرصيدك`:'')}return}
 });
 
 /* ---------- routing ---------- */
@@ -1028,7 +1068,7 @@ if(NATIVE&&!S.sample){
 // Android: back button, widget shortcuts, app returning to the foreground
 window.mizanBack=function(){if(sheet.open){sheet.close();return true}if(UI.tab!=='home'){go('home');return true}return false};
 window.mizanQuickAdd=function(cat){go('home');txSheet(cat?{cat}:{})};
-window.mizanResume=function(){if(UI.ym!==curYM()&&UI.ym>curYM())UI.ym=curYM();const a=creditSalary();if(a){save();toast(`اتضاف الراتب لرصيدك: ${money(a)} ${CUR}`)}if(!sheet.open)render();syncNative()};
+window.mizanResume=function(){if(UI.ym>curYM())UI.ym=curYM();freezeMonths();const a=creditSalary();if(a){save();toast(`اتضاف الراتب لرصيدك: ${money(a)} ${CUR}`)}if(!sheet.open)render();syncNative()};
 syncNative();
 
 if('serviceWorker' in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('sw.js').catch(()=>{})}
