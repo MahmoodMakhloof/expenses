@@ -61,7 +61,7 @@ function blank(){return {v:2,sample:false,salary:0,cats:[{id:uid(),name:'أكل'
 function migrate(s){
   s.exp=s.exp||[];s.inc=s.inc||[];s.recon=s.recon||[];s.debts=s.debts||[];s.coms=s.coms||[];s.cats=s.cats||[];
   s.set=Object.assign({notif:true,nudge:false,reconRemind:true,lock:false,autoBackup:true,lastBackup:0,askedNotif:false},s.set||{});
-  s.goal=+s.goal||0;s.payday=+s.payday||0;s.autoSalary=s.autoSalary!==false;s.salaryIn=s.salaryIn||{};
+  s.goal=+s.goal||0;if(s.carryMonth===undefined)s.carryMonth=true;s.payday=+s.payday||0;s.autoSalary=s.autoSalary!==false;s.salaryIn=s.salaryIn||{};
   s.cashSet=!!s.cashSet;s.cash=+s.cash||0;s.cashDate=s.cashDate||'';
   if(!s.since){const m=s.exp.map(x=>x.date.slice(0,7)).sort()[0];s.since=m&&m<curYM()?m:curYM()}
   s.coms.forEach(c=>{c.paid=c.paid||[];c.cx=c.cx||{};c.got=c.got||{}});
@@ -72,8 +72,8 @@ let S;
 try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){S=null}
 if(!S||!Array.isArray(S.cats))S=sample();
 migrate(S);
-let syncT;
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}clearTimeout(syncT);syncT=setTimeout(syncNative,400)}
+let syncT;const remCache=new Map();
+function save(){remCache.clear();try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}clearTimeout(syncT);syncT=setTimeout(syncNative,400)}
 
 const UI={tab:'home',ym:curYM(),showAll:false,debtDir:'owe'};
 
@@ -114,6 +114,14 @@ function debtPlan(d){
   const months=Math.ceil(left/d.inst);
   return {inst:d.inst,left,months,end:ymAdd(base,months-1),paidNow,start:d.instStart};
 }
+/* leftover of a month (income − commitments − spending) rolls into the next one */
+function monthRemaining(ym){
+  if(remCache.has(ym))return remCache.get(ym);
+  const commit=sum(S.coms.filter(c=>comActive(c,ym)))+sum(S.debts,d=>instDue(d,ym));
+  const v=carryFor(ym)+(S.salary||0)+sum(S.inc.filter(x=>x.date.startsWith(ym)))-commit-spentIn(ym);
+  remCache.set(ym,v);return v;
+}
+function carryFor(ym){if(!S.carryMonth)return 0;const prev=ymAdd(ym,-1);if(prev<S.since)return 0;return Math.max(0,monthRemaining(prev))}
 function calc(ym){
   const exp=S.exp.filter(x=>x.date.startsWith(ym));
   const spent=sum(exp);
@@ -122,7 +130,7 @@ function calc(ym){
   const debtInst=sum(S.debts,d=>instDue(d,ym));
   const commit=sum(coms)+debtInst;
   const extra=sum(S.inc.filter(x=>x.date.startsWith(ym)));
-  const base=S.salary||0, salary=base+extra, goal=S.goal||0;
+  const carry=carryFor(ym);const base=S.salary||0, salary=base+extra+carry, goal=S.goal||0;
   const remaining=salary-commit-spent;
   const days=dim(ym), cur=curYM();
   const day=ym<cur?days:ym>cur?0:+today().slice(8);
@@ -139,7 +147,7 @@ function calc(ym){
   if(unknown)byCat.push({...catById(UNK),i:-1,limit:0,carryIn:0,spent:unknown,ratio:0,subs:[],general:0});
   const owe=sum(S.debts.filter(d=>d.dir==='owe'),d=>Math.max(0,d.amt-d.paid));
   const lent=sum(S.debts.filter(d=>d.dir==='lent'),d=>Math.max(0,d.amt-d.paid));
-  return {exp,spent,unknown,commit,debtInst,coms,base,extra,salary,goal,remaining,spendable,days,day,daysLeft,avg,allowed,forecastSpent,forecastLeft,byCat,owe,lent,net:lent-owe,
+  return {carry,exp,spent,unknown,commit,debtInst,coms,base,extra,salary,goal,remaining,spendable,days,day,daysLeft,avg,allowed,forecastSpent,forecastLeft,byCat,owe,lent,net:lent-owe,
     used:salary?(spent+commit)/salary:0};
 }
 function payoffInfo(){
@@ -237,8 +245,9 @@ function renderHome(){
   $('#s-home').innerHTML=`
   ${S.sample?`<div class="banner"><p>دي بيانات تجريبية علشان تشوف التطبيق شغال إزاي.</p><button type="button" data-act="fresh">ابدأ ببياناتي</button></div>`:''}
   <div class="hero">
-    <div class="row between"><span class="lbl">المتبقي من دخل ${isCur?'الشهر':esc(monthName(UI.ym))}</span>
+    <div class="row between"><span class="lbl">المتبقي من دخل ${isCur?'الشهر':esc(monthName(UI.ym))} حسب المتسجل</span>
       <button class="salary-btn lbl" data-act="salary">الراتب: <span class="num">${money(R.base)}</span>${R.extra?` + <span class="num">${money(R.extra)}</span>`:''} ✎</button></div>
+    ${R.carry?`<span class="lbl carry-lbl">+ <span class="num">${money(R.carry)}</span> مرحّلين من ${esc(monthName(ymAdd(UI.ym,-1)))}</span>`:''}
     <div class="big num">${smoney(R.remaining)}<span>${CUR}</span></div>
     <div class="bar" role="img" aria-label="استهلكت ${usedPct}% من الدخل"><i class="${usedPct>100?'over':''}" style="width:${Math.min(100,usedPct)}%"></i></div>
     <div class="split">
@@ -247,6 +256,7 @@ function renderHome(){
       <div><b class="num">${R.goal?money(R.goal):usedPct+'%'}</b><small>${R.goal?'هدف ادخار':'من الدخل'}</small></div>
     </div>
   </div>
+  ${isCur&&S.cashSet&&R.remaining-S.cash>Math.max(500,R.salary*0.05)?`<div class="gap-hint"><p>حسب المتسجل المفروض يفضل معاك <b class="num">${money(R.remaining)}</b> من دخل الشهر، لكن رصيدك <b class="num">${money(S.cash)}</b>. الفرق <b class="num">${money(R.remaining-S.cash)}</b> ${CUR} غالبًا مصاريف متسجلتش${R.lent?' أو فلوس سلّفتها':''}.</p><button type="button" class="btn small-btn" data-act="reconMonth">اعمل جرد الشهر</button></div>`:''}
   ${!R.base?`<div class="banner"><p>سجّل راتبك ويوم القبض علشان التحليلات تتحسب صح.</p><button type="button" data-act="salary">سجّل الراتب</button></div>`:''}
   ${isCur?walletCard(R,F):''}
   ${alerts.length?`<div class="alerts" role="status">${alerts.map(a=>`<div class="alert ${a.k}"><span class="dot"></span><div>${a.h}</div></div>`).join('')}</div>`:''}
@@ -336,10 +346,11 @@ function goalCard(R){
 function whereCard(R){
   if(!R.salary&&!R.spent)return '';
   const known=R.spent-R.unknown;
-  const left=R.salary-R.commit-R.spent;
-  const rows=[['مصروفات متسجلة',known,'var(--teal-2)'],['التزامات وأقساط',R.commit,'var(--c3)'],['مش معروف',R.unknown,'var(--danger)'],[left>=0?'متبقي من دخل الشهر':'صرفت زيادة عن دخلك',Math.abs(left),left>=0?'var(--green)':'var(--danger)']].filter(r=>r[1]>0);
-  const tot=Math.max(R.salary,R.spent+R.commit)||1;
-  return `<div class="card where"><div class="row between"><h3 style="margin:0">فلوس ${UI.ym===curYM()?'الشهر':esc(monthName(UI.ym))} راحت فين؟</h3><span class="small muted">الدخل <span class="num">${money(R.salary)}</span></span></div>
+  const lentM=sum(S.debts.filter(d=>d.dir==='lent'&&d.date&&d.date.startsWith(UI.ym)));
+  const left=R.salary-R.commit-R.spent-lentM;
+  const rows=[['مصروفات متسجلة',known,'var(--teal-2)'],['التزامات وأقساط',R.commit,'var(--c3)'],['سلّفت للناس',lentM,'var(--c8)'],['مش معروف',R.unknown,'var(--danger)'],[left>=0?'متبقي من دخل الشهر':'صرفت زيادة عن دخلك',Math.abs(left),left>=0?'var(--green)':'var(--danger)']].filter(r=>r[1]>0);
+  const tot=Math.max(R.salary,R.spent+R.commit+lentM)||1;
+  return `<div class="card where"><div class="row between"><h3 style="margin:0">فلوس ${UI.ym===curYM()?'الشهر':esc(monthName(UI.ym))} راحت فين؟</h3><span class="small muted">الدخل <span class="num">${money(R.salary)}</span>${R.carry?` (منه <span class="num">${money(R.carry)}</span> مرحّل)`:''}</span></div>
     <div class="stack" role="img" aria-label="توزيع دخل الشهر">${rows.map(r=>`<i style="width:${r[1]/tot*100}%;background:${r[2]}"></i>`).join('')}</div>
     <ul class="where-list">${rows.map(r=>`<li><span class="sw" style="background:${r[2]}"></span><span>${r[0]}</span><b class="num">${money(r[1])}</b><span class="pc num">${Math.round(r[1]/tot*100)}%</span></li>`).join('')}</ul>
     ${R.unknown?`<p class="small" style="margin:0;color:var(--danger)">فيه <b class="num">${money(R.unknown)}</b> ${CUR} اتصرفوا ومش عارف فين (${Math.round(R.unknown/(R.salary||R.spent)*100)}% من دخلك). لو افتكرت حاجة، افتحها من آخر الحركات وانقلها لبندها.</p>`
@@ -611,46 +622,128 @@ function goalSheet(){
     <label class="field"><span>الهدف (${CUR})</span><input class="input amount" id="f-goal" inputmode="decimal" value="${S.goal||''}" placeholder="0"></label><button class="btn full">حفظ</button>`,
   f=>{const v=$('#f-goal',f).value.trim();const a=v?toNum(v):0;if(isNaN(a)||a<0)return 'اكتب رقم صحيح.';S.goal=a;return {toast:a?'اتحفظ الهدف':'اتشال الهدف'}},f=>$('#f-goal',f).select());
 }
-/* جرد: compare what you actually have with what the app expects */
-function reconSheet(){
-  if(!S.cashSet){cashSheet();return}
-  const since=reconSince();const silent=silentDays(since).slice(-10);
-  openSheet('جرد',`<p class="muted" style="margin:0">عدّ الفلوس اللي معاك فعلًا دلوقتي (كاش + بنك + محافظ) واكتبها.</p>
-    <div class="recon-top"><div><small>المفروض معاك</small><b class="num" id="rc-exp">${money(S.cash)}</b></div><div><small>معاك فعلًا</small><input class="input amount" id="f-act" inputmode="decimal" placeholder="0" aria-label="معاك فعلًا"></div></div>
-    <div id="rc-gap" class="rc-gap" hidden></div>
-    <div id="rc-help" hidden>
+/* جرد: compare what you actually have with what the app expects.
+   mode "since": from the last reconciliation (expected = tracked balance).
+   mode "month": from payday (expected = money before salary + income − everything recorded as going out). */
+function periodStart(){
+  if(S.payday){let d=clampDay(curYM(),S.payday);if(d>today())d=clampDay(ymAdd(curYM(),-1),S.payday);return d}
+  return curYM()+'-01';
+}
+function monthFlow(start){
+  const t=today(),inP=d=>!!d&&d>=start&&d<=t;
+  const months=[];for(let ym=start.slice(0,7);ym<=curYM();ym=ymAdd(ym,1))months.push(ym);
+  const exp=sum(S.exp.filter(x=>inP(x.date)));
+  const inc=sum(S.inc.filter(x=>inP(x.date)));
+  let coms=0,gamIn=0;S.coms.forEach(c=>months.forEach(ym=>{
+    const dd=c.due?clampDay(ym,c.due):null;const within=dd?inP(dd):ym===curYM();
+    if((c.paid||[]).includes(ym)&&within)coms+=c.amt;
+    if(c.got&&c.got[ym]&&within)gamIn+=c.amt*c.months}));
+  let instOut=0,instIn=0;S.debts.forEach(d=>months.forEach(ym=>{const a=(d.instPay||{})[ym];if(!a)return;
+    const dd=clampDay(ym,d.instDay||S.payday||1);if(!(inP(dd)||ym===curYM()))return;if(d.dir==='owe')instOut+=a;else instIn+=a}));
+  const lentNew=S.debts.filter(d=>d.dir==='lent'&&inP(d.date));
+  const borrowed=S.debts.filter(d=>d.dir==='owe'&&inP(d.date));
+  return {exp,inc,coms,gamIn,instOut,instIn,lentNew,borrowed};
+}
+/* the "help me remember" block shared by both modes */
+function rememberBlock(since){
+  const silent=silentDays(since).slice(-12);
+  return `<div id="rc-help" hidden>
       <p class="small" style="margin:0 0 6px"><b>قبل ما تقفل، حاول تفتكر.</b> من ${esc(dayName(since))}:</p>
-      ${silent.length?`<p class="small muted" style="margin:0 0 6px">أيام مسجّلتش فيها ولا مصروف: ${silent.map(d=>`<button type="button" class="day-chip" data-day="${d}">${esc(shortDate(d))}</button>`).join(' ')}</p>`:''}
+      ${silent.length?`<p class="small muted" style="margin:0 0 6px">أيام مسجّلتش فيها ولا مصروف (${nf.format(silentDays(since).length)}): ${silent.map(d=>`<button type="button" class="day-chip" data-day="${d}">${esc(shortDate(d))}</button>`).join(' ')}</p>`:''}
       <p class="small muted" style="margin:0 0 6px">حاجات الناس بتنساها كتير، اضغط على اللي حصل وسجّله:</p>
       <div class="picks">${FORGOT.map((x,i)=>`<button type="button" class="pick" data-forgot="${i}">${x[0]} ${esc(x[1])}</button>`).join('')}</div>
       <div id="rc-add" class="rc-add" hidden><div class="two"><input class="input" id="rc-amt" inputmode="decimal" placeholder="المبلغ" aria-label="المبلغ"><select class="input" id="rc-cat" aria-label="البند">${S.cats.map(c=>`<option value="${c.id}">${esc(c.icon)} ${esc(c.name)}</option>`).join('')}</select></div>
         <div class="two"><input class="input" id="rc-note" placeholder="ملاحظة" aria-label="ملاحظة"><input class="input" id="rc-date" type="date" value="${today()}" aria-label="التاريخ"></div>
         <button type="button" class="btn ghost full" id="rc-save">سجّله</button></div>
       <p class="small" id="rc-added" style="margin:8px 0 0"></p>
-    </div>
-    <button class="btn full" id="rc-done">اقفل الجرد</button>`,
-  f=>{const a=toNum($('#f-act',f).value);if(isNaN(a))return 'اكتب الفلوس اللي معاك فعلًا.';
-    const gap=a-S.cash;const rec={id:uid(),date:today(),expected:S.cash,actual:a,gap};
-    if(gap<-0.5){S.exp.push({id:uid(),amt:-gap,cat:UNK,note:`فرق جرد من ${shortDate(since)}`,date:today(),cx:0})}
-    else if(gap>0.5){S.inc.push({id:uid(),amt:gap,note:`زيادة في الجرد من ${shortDate(since)}`,date:today(),cx:0})}
-    S.recon.push(rec);S.cash=a;
-    return {toast:Math.abs(gap)<0.5?'مظبوط بالمليم. مفيش فلوس ضايعة.':gap<0?`اتسجل ${money(-gap)} مش معروف. لو افتكرت، انقله لبنده.`:`معاك ${money(gap)} زيادة، اتسجلت دخل.`}},
-  f=>{
-    const act=$('#f-act',f);let added=0,picked=null;
+    </div>`;
+}
+function wireRemember(f,onAdd){
+  let added=0;
+  $$('[data-forgot]',f).forEach(b=>b.onclick=()=>{const x=FORGOT[+b.dataset.forgot];$('#rc-add',f).hidden=false;$('#rc-note',f).value=x[1];$('#rc-amt',f).focus()});
+  $$('[data-day]',f).forEach(b=>b.onclick=()=>{$('#rc-add',f).hidden=false;$('#rc-date',f).value=b.dataset.day;$('#rc-note',f).value='';$('#rc-amt',f).focus()});
+  $('#rc-save',f).onclick=()=>{const a=toNum($('#rc-amt',f).value);if(!(a>0)){$('#rc-amt',f).focus();return}
+    const r={id:uid(),amt:a,cat:$('#rc-cat',f).value,note:$('#rc-note',f).value.trim(),date:$('#rc-date',f).value||today(),cx:0};
+    S.exp.push(r);onAdd(r);added+=a;save();
+    $('#rc-added',f).innerHTML=`سجّلت <b class="num">${money(added)}</b> ${CUR}. الفرق قلّ.`;$('#rc-amt',f).value='';$('#rc-add',f).hidden=true};
+}
+const gapHtml=gap=>Math.abs(gap)<0.5?'مظبوط. كل فلوسك متسجلة.':gap<0?`ناقص <b class="num">${money(-gap)}</b> ${CUR} مش متسجلين`:`معاك <b class="num">${money(gap)}</b> ${CUR} زيادة عن المتسجل`;
+function closeRecon(actual,expected,since,label){
+  const gap=actual-expected;
+  if(gap<-0.5)S.exp.push({id:uid(),amt:-gap,cat:UNK,note:`فرق ${label} من ${shortDate(since)}`,date:today(),cx:0});
+  else if(gap>0.5)S.inc.push({id:uid(),amt:gap,note:`زيادة في ${label} من ${shortDate(since)}`,date:today(),cx:0});
+  S.recon.push({id:uid(),date:today(),since,expected,actual,gap});
+  S.cash=actual;S.cashSet=true;if(!S.cashDate)S.cashDate=today();
+  return {toast:Math.abs(gap)<0.5?'مظبوط بالمليم. مفيش فلوس ضايعة.':gap<0?`اتسجل ${money(-gap)} مش معروف. لو افتكرت، انقله لبنده.`:`معاك ${money(gap)} زيادة، اتسجلت دخل.`};
+}
+const modeSeg=m=>`<div class="seg" role="group" aria-label="نوع الجرد"><button type="button" data-rmode="month" aria-pressed="${m==='month'}">من يوم القبض</button><button type="button" data-rmode="since" aria-pressed="${m==='since'}">من آخر جرد</button></div>`;
+function wireModeSeg(f){$$('[data-rmode]',f).forEach(b=>b.onclick=()=>b.dataset.rmode==='month'?reconMonthSheet():reconSheet('since'))}
+function reconSheet(mode){
+  if(!S.cashSet&&mode!=='month'){reconMonthSheet();return}
+  if(!mode)mode=S.recon.filter(r=>!r.start).length?'since':'month';
+  if(mode==='month'){reconMonthSheet();return}
+  const since=reconSince();
+  openSheet('جرد',`${modeSeg('since')}
+    <p class="muted small" style="margin:0">من آخر جرد (${esc(dayName(since))}). عدّ الفلوس اللي معاك فعلًا دلوقتي (كاش + بنك + محافظ) واكتبها.</p>
+    <div class="recon-top"><div><small>المفروض معاك</small><b class="num" id="rc-exp">${money(S.cash)}</b></div><div><small>معاك فعلًا</small><input class="input amount" id="f-act" inputmode="decimal" placeholder="0" aria-label="معاك فعلًا"></div></div>
+    <div id="rc-gap" class="rc-gap" hidden></div>
+    ${rememberBlock(since)}
+    <button class="btn full">اقفل الجرد</button>`,
+  f=>{const a=toNum($('#f-act',f).value);if(isNaN(a))return 'اكتب الفلوس اللي معاك فعلًا.';return closeRecon(a,S.cash,since,'جرد')},
+  f=>{wireModeSeg(f);const act=$('#f-act',f);
     const upd=()=>{$('#rc-exp',f).textContent=money(S.cash);const v=toNum(act.value);const g=$('#rc-gap',f),h=$('#rc-help',f);
-      if(isNaN(v)){g.hidden=true;h.hidden=true;return}
-      const gap=v-S.cash;g.hidden=false;
-      g.className='rc-gap '+(Math.abs(gap)<0.5?'ok':gap<0?'bad':'plus');
-      g.innerHTML=Math.abs(gap)<0.5?'مظبوط. كل فلوسك متسجلة.':gap<0?`ناقص <b class="num">${money(-gap)}</b> ${CUR} مش متسجلين`:`معاك <b class="num">${money(gap)}</b> ${CUR} زيادة عن المتسجل`;
-      h.hidden=!(gap<-0.5)};
+      if(isNaN(v)){g.hidden=true;h.hidden=true;return}const gap=v-S.cash;g.hidden=false;
+      g.className='rc-gap '+(Math.abs(gap)<0.5?'ok':gap<0?'bad':'plus');g.innerHTML=gapHtml(gap);h.hidden=!(gap<-0.5)};
     act.addEventListener('input',upd);act.focus();
-    $$('[data-forgot]',f).forEach(b=>b.onclick=()=>{picked=FORGOT[+b.dataset.forgot];$('#rc-add',f).hidden=false;$('#rc-note',f).value=picked[1];$('#rc-amt',f).focus()});
-    $$('[data-day]',f).forEach(b=>b.onclick=()=>{$('#rc-add',f).hidden=false;$('#rc-date',f).value=b.dataset.day;$('#rc-note',f).value='';$('#rc-amt',f).focus()});
-    $('#rc-save',f).onclick=()=>{const a=toNum($('#rc-amt',f).value);if(!(a>0)){$('#rc-amt',f).focus();return}
-      const r={id:uid(),amt:a,cat:$('#rc-cat',f).value,note:$('#rc-note',f).value.trim(),date:$('#rc-date',f).value||today()};
-      r.cx=1;S.exp.push(r);S.cash-=a;added+=a;save();
-      $('#rc-added',f).innerHTML=`سجّلت <b class="num">${money(added)}</b> ${CUR}. الفرق قلّ.`;$('#rc-amt',f).value='';$('#rc-add',f).hidden=true;upd()};
-  });
+    wireRemember(f,r=>{S.cash-=r.amt;upd()})});
+}
+function reconMonthSheet(){
+  const start=periodStart();
+  const F0=monthFlow(start);
+  const lastBefore=S.recon.filter(r=>r.date<start&&!r.start).pop();
+  const dl=(d,sign)=>`<label class="flow-row chk ${sign<0?'out':''}"><input type="checkbox" data-debt="${d.id}" checked><span>${sign>0?'استلفت من':'سلّفت'} ${esc(d.name)} <small class="muted">${esc(shortDate(d.date))}</small></span><b class="num"><bdi dir="ltr">${sign>0?'+':'−'}${money(d.amt)}</bdi></b></label>`;
+  openSheet('جرد الشهر',`${modeSeg('month')}
+    <p class="muted small" style="margin:0">من يوم القبض لحد النهارده. التطبيق بيحسب الفلوس اللي المفروض تكون معاك من اللي اتسجل، ويقارنها باللي معاك فعلًا.</p>
+    <div class="flow">
+      <label class="flow-row"><span>بداية الفترة</span><input class="input mini" type="date" id="m-start" value="${start}"></label>
+      <label class="flow-row"><span>كان معاك قبل الراتب</span><input class="input mini" id="m-before" inputmode="decimal" placeholder="0" value="${lastBefore?Math.round(lastBefore.actual):''}"></label>
+      <label class="flow-row chk"><input type="checkbox" id="m-sal" checked><span>الراتب</span><input class="input mini" id="m-salv" inputmode="decimal" value="${S.salary||''}" aria-label="الراتب"></label>
+      <div class="flow-row" id="m-inc-row"><span>دخل إضافي</span><b class="num" id="m-inc"></b></div>
+      <div class="flow-row" id="m-gam-row"><span>قبض جمعية</span><b class="num" id="m-gam"></b></div>
+      <div class="flow-row" id="m-instin-row"><span>أقساط استلمتها</span><b class="num" id="m-instin"></b></div>
+      <div id="m-borrow">${F0.borrowed.map(d=>dl(d,1)).join('')}</div>
+      <div class="flow-row out"><span>مصروفات متسجلة</span><b class="num" id="m-exp"></b></div>
+      <div class="flow-row out" id="m-coms-row"><span>التزامات علّمت إنها اتدفعت</span><b class="num" id="m-coms"></b></div>
+      <div class="flow-row out" id="m-inst-row"><span>أقساط ديون دفعتها</span><b class="num" id="m-inst"></b></div>
+      <div id="m-lent">${F0.lentNew.map(d=>dl(d,-1)).join('')}</div>
+      <div class="flow-row total"><span>المفروض معاك</span><b class="num" id="m-expct"></b></div>
+    </div>
+    <label class="field"><span>معاك فعلًا دلوقتي (كاش + بنك + محافظ)</span><input class="input amount" id="f-act" inputmode="decimal" value="${S.cashSet?Math.round(S.cash):''}" placeholder="0"></label>
+    <div id="rc-gap" class="rc-gap" hidden></div>
+    <p class="small muted" style="margin:0">مش داخل في الحساب: الالتزامات اللي لسه متعلّمتش ✓، لأنها لسه مطلعتش من جيبك.</p>
+    ${rememberBlock(start)}
+    <button class="btn full">اقفل جرد الشهر</button>`,
+  f=>{const r=compute(f);if(isNaN(r.actual))return 'اكتب الفلوس اللي معاك فعلًا.';
+    if($('#m-sal',f).checked&&S.payday){for(let ym=r.start.slice(0,7);ym<=curYM();ym=ymAdd(ym,1))if(clampDay(ym,S.payday)<=today())S.salaryIn[ym]=1}
+    S.cashDate=today();return closeRecon(r.actual,r.expected,r.start,'جرد الشهر')},
+  f=>{wireModeSeg(f);
+    window.__mf=f;
+    const show=(id,v,sign)=>{const row=$('#'+id+'-row',f);if(row)row.hidden=!v;$('#'+id,f).innerHTML=`<bdi dir="ltr">${sign>0?'+':'−'}${money(v)}</bdi>`};
+    const upd=()=>{const r=compute(f);
+      show('m-inc',r.F.inc,1);show('m-gam',r.F.gamIn,1);show('m-instin',r.F.instIn,1);
+      $('#m-exp',f).innerHTML=`<bdi dir="ltr">−${money(r.F.exp)}</bdi>`;show('m-coms',r.F.coms,-1);show('m-inst',r.F.instOut,-1);
+      $('#m-expct',f).innerHTML=smoney(r.expected);
+      const g=$('#rc-gap',f),h=$('#rc-help',f);if(isNaN(r.actual)){g.hidden=true;h.hidden=true;return}
+      const gap=r.actual-r.expected;g.hidden=false;g.className='rc-gap '+(Math.abs(gap)<0.5?'ok':gap<0?'bad':'plus');g.innerHTML=gapHtml(gap);h.hidden=!(gap<-0.5)};
+    f.addEventListener('input',upd);f.addEventListener('change',e=>{if(e.target.id==='m-start'){const st=e.target.value||start;const F=monthFlow(st);$('#m-borrow',f).innerHTML=F.borrowed.map(d=>dl(d,1)).join('');$('#m-lent',f).innerHTML=F.lentNew.map(d=>dl(d,-1)).join('')}upd()});
+    wireRemember(f,()=>upd());upd()});
+  function compute(f){
+    const st=$('#m-start',f).value||start;const F=monthFlow(st);
+    const before=toNum($('#m-before',f).value)||0;const sal=$('#m-sal',f).checked?(toNum($('#m-salv',f).value)||0):0;
+    let debtNet=0;$$('[data-debt]',f).forEach(cb=>{if(!cb.checked)return;const d=S.debts.find(x=>x.id===cb.dataset.debt);if(d)debtNet+=d.dir==='owe'?d.amt:-d.amt});
+    const expected=before+sal+F.inc+F.gamIn+F.instIn-F.exp-F.coms-F.instOut+debtNet;
+    return {start:st,F,expected,actual:toNum($('#f-act',f).value)};
+  }
 }
 function catSheet(c){
   const isNew=!c;c=c||{name:'',icon:'📦',limit:'',subs:[]};
@@ -762,6 +855,7 @@ function settingsSheet(){
     <div class="set-group"><h4>الفلوس</h4>
       <button type="button" class="set-row" data-go="salary"><span>الراتب ويوم القبض</span><b class="num">${money(S.salary)}${S.payday?` · يوم ${S.payday}`:''}</b></button>
       <button type="button" class="set-row" data-go="cash"><span>رصيدي</span><b class="num">${S.cashSet?money(S.cash):'مش متسجل'}</b></button>
+      <label class="toggle"><span>رحّل المتبقي من كل شهر للشهر اللي بعده</span><input type="checkbox" id="st-carry" ${S.carryMonth?'checked':''}></label>
       <button type="button" class="set-row" data-go="goal"><span>هدف الادخار</span><b class="num">${S.goal?money(S.goal):'مفيش'}</b></button>
     </div>
     <div class="set-group"><h4>التنبيهات</h4>
@@ -785,6 +879,7 @@ function settingsSheet(){
     tg('st-notif',v=>{S.set.notif=v;if(v&&NATIVE&&NATIVE.requestNotif)NATIVE.requestNotif()});
     tg('st-nudge',v=>{S.set.nudge=v;if(v&&NATIVE&&NATIVE.requestNotif)NATIVE.requestNotif()});
     tg('st-recon',v=>S.set.reconRemind=v);
+    tg('st-carry',v=>{S.carryMonth=v;toast(v?'المتبقي هيترحّل للشهر الجاي':'اتقفل الترحيل')});
     tg('st-lock',v=>{S.set.lock=v;NATIVE&&NATIVE.setLock(v);toast(v?'التطبيق هيطلب البصمة لما تفتحه':'اتشال القفل')});
     $('#st-backup',f).onclick=()=>backupNow(false);
     $('#st-file',f).onchange=e=>{const file=e.target.files[0];if(!file)return;const rd=new FileReader();rd.onload=()=>restoreFrom(rd.result,f);rd.readAsText(file)};
@@ -845,7 +940,7 @@ document.addEventListener('click',e=>{
   const t=e.target.closest('[data-act],[data-open],[data-cat],[data-dir],[data-pay],[data-inst],[data-edit-debt],[data-edit-com],[data-paid],[data-got]');if(!t)return;
   const ds=t.dataset;
   if(ds.act){e.preventDefault();({
-    salary:salarySheet,cash:cashSheet,recon:reconSheet,goal:goalSheet,search:searchSheet,fresh:freshSheet,addCat:()=>catSheet(),
+    salary:salarySheet,cash:cashSheet,recon:()=>reconSheet(),reconMonth:reconMonthSheet,goal:goalSheet,search:searchSheet,fresh:freshSheet,addCat:()=>catSheet(),
     addDebt:()=>debtSheet(null,UI.debtDir),addGam:()=>comSheet(null,'gam'),addBill:()=>comSheet(null,'bill'),
     debts:()=>{if(sheet.open)sheet.close();go('debts')}})[ds.act]?.();return}
   if(ds.open){itemSheet(ds.open,ds.id);return}
