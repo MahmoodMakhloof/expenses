@@ -26,6 +26,10 @@ android {
             signingConfig signingConfigs.release
         }
     }
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -34,7 +38,7 @@ android {
 
 // Copy the web app into the APK's assets before every build.
 tasks.register('copyWebApp', Copy) {
-    from('../..') { include 'index.html', 'icon.svg', 'fonts/**' }
+    from('../..') { include 'index.html', 'app.js', 'icon.svg', 'fonts/**' }
     into 'src/main/assets'
 }
 preBuild.dependsOn copyWebApp

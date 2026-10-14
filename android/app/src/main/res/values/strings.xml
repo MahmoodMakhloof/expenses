@@ -1,1 +1,4 @@
-<resources><string name="app_name">ميزان</string></resources>
+<resources>
+    <string name="app_name">ميزان</string>
+    <string name="widget_desc">سجّل مصروف بضغطة، وشوف المسموح تصرفه النهارده</string>
+</resources>

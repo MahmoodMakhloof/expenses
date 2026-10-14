@@ -1,4 +1,12 @@
 <resources>
     <color name="bg">#0E1917</color>
     <color name="nav">#152420</color>
+    <color name="w_bg">#152420</color>
+    <color name="w_ink">#E2EEEA</color>
+    <color name="w_muted">#93A8A2</color>
+    <color name="w_teal">#5CC2BC</color>
+    <color name="w_chip">#173431</color>
+    <color name="w_cat">#1C302A</color>
+    <color name="w_line">#28403A</color>
+    <color name="w_danger">#E5806F</color>
 </resources>

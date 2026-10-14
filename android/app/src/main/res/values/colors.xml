@@ -3,4 +3,12 @@
     <color name="nav">#FFFFFF</color>
     <color name="icon_start">#1A615D</color>
     <color name="icon_end">#2E9690</color>
+    <color name="w_bg">#F7FBF9</color>
+    <color name="w_ink">#14302A</color>
+    <color name="w_muted">#5D716C</color>
+    <color name="w_teal">#1F6F6B</color>
+    <color name="w_chip">#DDEFEC</color>
+    <color name="w_cat">#FFFFFF</color>
+    <color name="w_line">#D9E5E0</color>
+    <color name="w_danger">#B4473A</color>
 </resources>

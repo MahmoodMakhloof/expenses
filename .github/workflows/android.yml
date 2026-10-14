@@ -27,7 +27,9 @@ jobs:
           gradle-version: '8.9'
       - name: Build release APK
         working-directory: android
-        run: gradle --no-daemon assembleRelease
+        run: |
+          set -o pipefail
+          gradle --no-daemon assembleRelease 2>&1 | tee ../build.log
       - name: Rename APK
         run: cp android/app/build/outputs/apk/release/app-release.apk mizan-1.0.${{ github.run_number }}.apk
       - uses: actions/upload-artifact@v4
@@ -42,3 +44,10 @@ jobs:
             --title "ميزان 1.0.${{ github.run_number }}" \
             --notes "نسخة أندرويد من ميزان. نزّل ملف الـ APK وثبّته على موبايلك." \
             --target "${{ github.sha }}"
+      - name: Publish build log on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tail -c 60000 build.log > build-tail.log || echo "no log" > build-tail.log
+          gh release create "build-failed-${{ github.run_number }}" build-tail.log --prerelease --title "Build failed ${{ github.run_number }}" --notes "سجل البناء" --target "${{ github.sha }}"
