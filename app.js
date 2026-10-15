@@ -268,110 +268,125 @@ function reconSince(){const r=lastRecon();return r?r.date:(S.cashDate||today())}
 function silentDays(from){const out=[];const t=today();for(let d=from;d<=t;d=addDays(d,1)){if(!S.exp.some(x=>x.date===d))out.push(d)}return out}
 
 /* ---------- home ---------- */
-function renderHome(){
-  const R=calc(UI.ym), cur=curYM(), isCur=UI.ym===cur;
-  const usedPct=Math.round(R.used*100);
-  const F=isCur?forecast():null;
+function homeAlerts(R,isCur){
   const alerts=[];
   R.byCat.forEach(c=>{
     if(!c.limit||c.id===UNK)return;
-    if(c.ratio>1)alerts.push({k:'over',h:`<b>${esc(c.icon)} ${esc(c.name)}</b> عدّى ميزانيته بـ <span class="num">${money(c.spent-c.limit)}</span> ${CUR}`});
-    else if(c.ratio===1)alerts.push({k:'warn',h:`<b>${esc(c.icon)} ${esc(c.name)}</b> خلّص ميزانيته بالظبط، أي صرف زيادة هيعدّيها`});
-    else if(c.ratio>=.8)alerts.push({k:'warn',h:`<b>${esc(c.icon)} ${esc(c.name)}</b> قرّب يخلص: استهلكت ${Math.round(c.ratio*100)}%، فاضل <span class="num">${money(c.limit-c.spent)}</span> ${CUR}`});
-    else if(isCur&&R.day>=5&&c.spent/R.day*R.days>c.limit*1.05)alerts.push({k:'warn',h:`بمعدلك ده <b>${esc(c.icon)} ${esc(c.name)}</b> هيعدّي ميزانيته بحوالي <span class="num">${money(c.spent/R.day*R.days-c.limit)}</span> ${CUR} قبل آخر الشهر`});
+    if(c.ratio>1)alerts.push({k:'over',h:`<b>${esc(c.name)}</b> عدّى ميزانيته بـ <span class="num">${money(c.spent-c.limit)}</span>`});
+    else if(c.ratio>=1)alerts.push({k:'warn',h:`<b>${esc(c.name)}</b> خلّص ميزانيته`});
+    else if(c.ratio>=.8)alerts.push({k:'warn',h:`<b>${esc(c.name)}</b> فاضل فيه <span class="num">${money(c.limit-c.spent)}</span> بس`});
+    else if(isCur&&R.day>=5&&c.spent/R.day*R.days>c.limit*1.05)alerts.push({k:'warn',h:`بمعدلك ده <b>${esc(c.name)}</b> هيعدّي ميزانيته قبل آخر الشهر`});
   });
-  R.byCat.forEach(c=>c.subs.forEach(sb=>{if(sb.limit&&sb.ratio>1&&c.ratio<=1)alerts.push({k:'over',h:`<b>${esc(c.icon)} ${esc(sb.name)}</b> (${esc(c.name)}) عدّى ميزانيته بـ <span class="num">${money(sb.spent-sb.limit)}</span> ${CUR}`})}));
-  if(R.salary&&R.remaining<0)alerts.unshift({k:'over',h:`صرفت أكتر من دخلك بـ <span class="num">${money(-R.remaining)}</span> ${CUR}`});
-  else if(isCur&&R.salary&&R.forecastLeft<0)alerts.push({k:'warn',h:`لو كملت بنفس المعدل هتخلّص الشهر بعجز <span class="num">${money(-R.forecastLeft)}</span> ${CUR}`});
-  S.coms.filter(c=>c.type==='gam'&&comActive(c,UI.ym)&&ymDiff(UI.ym,c.start)+1===c.turn&&!c.got[UI.ym]).forEach(c=>alerts.push({k:'warn',h:`<b>${esc(c.name)}</b>: دورك تقبض الشهر ده <span class="num">${money(c.amt*c.months)}</span> ${CUR}`}));
-  if(isCur&&S.cashSet&&S.set.reconRemind){const since=reconSince();const k=dayDiff(today(),since);if(k>=7)alerts.push({k:'warn',h:`عدّى ${nf.format(k)} يوم من آخر جرد. اعمل جرد دلوقتي علشان تعرف لو فيه فلوس اتصرفت ومتسجلتش. <button type="button" class="link inline" data-act="recon">اعمل جرد</button>`})}
-
-  const parts=R.byCat.filter(c=>c.spent>0).sort((a,b)=>b.spent-a.spent);
-  const r=56,C=2*Math.PI*r;let off=0;
-  const arcs=parts.map(c=>{const len=C*c.spent/R.spent;const g=parts.length>1?Math.min(3,len/3):0;const s=`<circle cx="75" cy="75" r="${r}" fill="none" stroke="${catColor(c.i)}" stroke-width="18" stroke-dasharray="${Math.max(0,len-g)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 75 75)"/>`;off+=len;return s}).join('');
-
+  R.byCat.forEach(c=>c.subs.forEach(sb=>{if(sb.limit&&sb.ratio>1&&c.ratio<=1)alerts.push({k:'over',h:`<b>${esc(sb.name)}</b> عدّى ميزانيته بـ <span class="num">${money(sb.spent-sb.limit)}</span>`})}));
+  if(R.salary>0&&R.remaining<0)alerts.unshift({k:'over',h:`صرفت أكتر من دخل الشهر بـ <span class="num">${money(-R.remaining)}</span>`});
+  S.coms.filter(c=>c.type==='gam'&&comActive(c,UI.ym)&&ymDiff(UI.ym,c.start)+1===c.turn&&!c.got[UI.ym]).forEach(c=>alerts.push({k:'info',h:`دورك تقبض <b>${esc(c.name)}</b> الشهر ده: <span class="num">${money(c.amt*c.months)}</span>`}));
+  if(isCur&&S.cashSet&&S.set.reconRemind){const k=dayDiff(today(),reconSince());if(k>=7)alerts.push({k:'info',h:`عدّى ${nf.format(k)} يوم من آخر جرد. <button type="button" class="link inline" data-act="recon">اعمل جرد</button>`})}
+  return alerts;
+}
+function heroBalance(R,F){
+  if(!S.cashSet)return `<div class="bal empty"><div class="bal-top"><span>معاك كام دلوقتي؟</span></div>
+    <p>سجّل الفلوس اللي معاك (كاش وبنك ومحافظ) ويوم القبض. هتعرف فلوسك هتكفيك لحد امتى، وتقدر تصرف كام كل يوم.</p>
+    <button type="button" class="btn" data-act="cash">سجّل رصيدي</button>
+    <div class="bal-row"><div><small>فاضل من دخل الشهر</small><b>${smoney(R.remaining)}</b></div><div><small>تقدر تصرف النهارده</small><b>${money(R.allowed)}</b></div></div></div>`;
+  const t=today(),end=F.nextPay||addDays(t,30);const total=Math.max(1,dayDiff(end,t));
+  const short=S.cash<0||(F.firstNeg&&F.firstNeg.date<end);
+  const covered=S.cash<0?0:F.firstNeg&&F.firstNeg.date<end?Math.max(0,dayDiff(F.firstNeg.date,t)):total;
+  let msg;
+  if(S.cash<0)msg=`رصيدك المتسجل بالسالب. اعمل <b>جرد</b> واكتب اللي معاك فعلًا.`;
+  else if(short)msg=F.safe>0?`هتخلص <b>${esc(dayName(F.firstNeg.date))}</b>. علشان تكمّل ${F.nextPay?'للقبض':''}، متصرفش أكتر من <b class="num">${money(F.safe)}</b> في اليوم.`
+    :`<b>${esc(F.firstNeg.cause)}</b> ${esc(dayName(F.firstNeg.date))} أكبر من رصيدك. أجّلها أو حصّل جزء من اللي ليك.`;
+  else msg=F.nextPay?`تكفيك لحد القبض، ويفضل معاك حوالي <b class="num">${money(Math.max(0,F.balBeforePay))}</b>.`:`تكفيك الـ 30 يوم الجايين بمعدل صرفك.`;
+  const todayCan=short?(F.safe||0):R.allowed;
+  return `<div class="bal">
+    <div class="bal-top"><span>معاك دلوقتي</span><button type="button" data-act="recon">جرد</button></div>
+    <div class="bal-num">${smoney(S.cash)}<small>${CUR}</small></div>
+    <button type="button" class="runway" data-act="insights" aria-label="تفاصيل التوقع" style="all:unset;cursor:pointer;display:flex;flex-direction:column;gap:7px">
+      <div class="rw-track"><div class="rw-fill ${short?'short':''}" style="width:${Math.max(3,covered/total*100)}%"></div></div>
+      <div class="rw-legend"><span>النهارده</span><span>${F.nextPay?'القبض '+esc(shortDate(F.nextPay)):'بعد 30 يوم'}</span></div>
+      <div class="rw-msg">${msg}</div>
+    </button>
+    <div class="bal-row"><div><small>تقدر تصرف النهارده</small><b>${money(todayCan)}</b></div><div><small>فاضل من دخل الشهر</small><b>${smoney(R.remaining)}</b></div></div>
+  </div>`;
+}
+function monthCard(R){
+  const known=R.spent-R.unknown,left=R.remaining;
+  const lentM=R.DF.lentOut+R.DF.owePaid;
+  const rows=[['صرفت',known,'var(--teal-2)'],['التزامات',R.commit,'var(--c3)'],['سلف وسداد ديون',lentM,'var(--c8)'],['مش معروف',R.unknown,'var(--danger)'],[left>=0?'فاضل':'عجز',Math.abs(left),left>=0?'var(--c4)':'var(--danger)']].filter(r=>r[1]>0.5);
+  const tot=Math.max(1,sum(rows,r=>r[1]));
+  const cats=R.byCat.filter(c=>c.limit&&c.id!==UNK).sort((a,b)=>b.ratio-a.ratio).slice(0,3);
+  return `<div class="card month-sum">
+    <div class="ms-head"><div><small>صرفت ${UI.ym===curYM()?'الشهر ده':'في '+esc(monthName(UI.ym))}</small><div class="big">${money(R.spent+R.commit)} <small>${CUR}</small></div></div>
+      <small>من دخل <span class="num">${money(R.salary)}</span></small></div>
+    <div class="stack" role="img" aria-label="توزيع دخل الشهر">${rows.map(r=>`<i style="width:${r[1]/tot*100}%;background:${r[2]}"></i>`).join('')}</div>
+    <ul class="ms-rows">${rows.map(r=>`<li><i class="sw" style="background:${r[2]}"></i><span>${r[0]}</span><b>${money(r[1])}</b></li>`).join('')}</ul>
+    ${cats.length?`<button type="button" class="cat-mini" data-act="budget" style="all:unset;cursor:pointer;display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--line);padding-top:14px">${cats.map(c=>{const st=c.ratio>1?'over':c.ratio>=.8?'warn':'';return `<div class="cm"><div class="cm-top"><span>${esc(c.icon)} ${esc(c.name)}</span><b>${money(c.spent)} <small>/ ${money(c.limit)}</small></b></div><div class="meter thin"><i class="${st}" style="width:${Math.min(100,c.ratio*100)}%"></i></div></div>`}).join('')}</button>`:''}
+  </div>`;
+}
+function renderHome(){
+  const R=calc(UI.ym),isCur=UI.ym===curYM();const F=isCur&&S.cashSet?forecast():null;
+  const alerts=homeAlerts(R,isCur);
   const tx=[...R.exp.map(x=>({...x,_k:'exp'})),...S.inc.filter(x=>x.date.startsWith(UI.ym)).map(x=>({...x,_k:'inc'}))].sort((a,b)=>b.date.localeCompare(a.date));
-  const shown=tx.slice(0,6);
-
+  const counts={};S.exp.filter(x=>x.date>=addDays(today(),-60)).forEach(x=>counts[x.cat]=(counts[x.cat]||0)+1);
+  const quick=S.cats.slice().sort((a,b)=>(counts[b.id]||0)-(counts[a.id]||0)).slice(0,4);
+  const showN=UI.allNotes?alerts.length:2;
   $('#s-home').innerHTML=`
   ${S.sample?`<div class="banner"><p>دي بيانات تجريبية علشان تشوف التطبيق شغال إزاي.</p><button type="button" data-act="fresh">ابدأ ببياناتي</button></div>`:''}
-  <div class="hero">
-    <div class="row between"><span class="lbl">المتبقي من دخل ${isCur?'الشهر':esc(monthName(UI.ym))} حسب المتسجل</span>
-      <button class="salary-btn lbl" data-act="salary">الراتب: <span class="num">${money(R.base)}</span>${R.extra?` + <span class="num">${money(R.extra)}</span>`:''} ✎</button></div>
-    ${R.carry?`<span class="lbl carry-lbl">${R.carry>0?'+':'−'} <span class="num">${money(Math.abs(R.carry))}</span> ${R.carry>0?'مرحّلين':'عجز مرحّل'} من ${esc(monthName(ymAdd(UI.ym,-1)))}</span>`:''}
-    <div class="big num">${smoney(R.remaining)}<span>${CUR}</span></div>
-    ${R.DF.net||R.gam?`<span class="lbl carry-lbl">${[R.gam?`قبض جمعية ${money(R.gam)}`:'',R.DF.lentOut?`سلّفت ${money(R.DF.lentOut)}`:'',R.DF.borrowed?`استلفت ${money(R.DF.borrowed)}`:'',R.DF.lentBack?`رجعلك ${money(R.DF.lentBack)}`:'',R.DF.owePaid?`سددت ${money(R.DF.owePaid)}`:''].filter(Boolean).join(' · ')}</span>`:''}
-    <div class="bar" role="img" aria-label="استهلكت ${usedPct}% من الدخل"><i class="${usedPct>100?'over':''}" style="width:${Math.min(100,usedPct)}%"></i></div>
-    <div class="split">
-      <div><b class="num">${money(R.spent)}</b><small>مصروفات</small></div>
-      <div><b class="num">${money(R.commit)}</b><small>التزامات</small></div>
-      <div><b class="num">${R.goal?money(R.goal):usedPct+'%'}</b><small>${R.goal?'هدف ادخار':'من الدخل'}</small></div>
-    </div>
-  </div>
-  ${!R.base?`<div class="banner"><p>سجّل راتبك ويوم القبض علشان التحليلات تتحسب صح.</p><button type="button" data-act="salary">سجّل الراتب</button></div>`:''}
-  ${isCur?walletCard(R,F):''}
-  ${alerts.length?`<div class="alerts" role="status">${alerts.map(a=>`<div class="alert ${a.k}"><span class="dot"></span><div>${a.h}</div></div>`).join('')}</div>`:''}
-  <div class="stats">
-    <div class="stat"><span class="k">نسبة الاستهلاك</span><div class="row between"><span class="v">${usedPct}<small>%</small></span><span class="ring" style="--p:${Math.min(100,usedPct)}"></span></div><span class="h">مصروف + التزامات ÷ الدخل</span></div>
-    <div class="stat"><span class="k">متوسط الصرف اليومي</span><span class="v">${money(R.avg)}<small>${CUR}</small></span><span class="h">على ${nf.format(R.day)} يوم</span></div>
-    <div class="stat ${R.allowed>0?'good':'bad'}"><span class="k">المسموح تصرفه يوميًا</span><span class="v">${isCur?money(R.allowed):'—'}<small>${isCur?CUR:''}</small></span><span class="h">${isCur?`لباقي ${nf.format(R.daysLeft)} يوم${R.goal?' بعد هدف الادخار':''}`:'للشهر الحالي بس'}</span></div>
-    <div class="stat ${R.forecastLeft<0?'bad':''}"><span class="k">توقع آخر الشهر</span><span class="v">${smoney(R.forecastLeft)}<small>${CUR}</small></span><span class="h">${UI.ym<cur?'الفعلي اللي فضل':`لو صرفت ${money(R.avg)} يوميًا`}</span></div>
-    <button type="button" class="stat wide debt" data-act="debts"><div class="row between" style="width:100%"><div><span class="k">صافي الديون</span><div class="v">${smoney(R.net)}<small>${CUR}</small></div></div>
-      <div class="small muted" style="text-align:left">ليّا <span class="num">${money(R.lent)}</span><br>عليّا <span class="num">${money(R.owe)}</span></div></div>
-      <span class="h">${(()=>{const P=R.owe>0?payoffInfo():null;return P&&P.end?`تخلص من ديونك في ${esc(monthName(P.end))}`:R.net>0?'الناس عليها ليك أكتر':R.net<0?'عليك للناس أكتر':'متعادل'})()}</span></button>
-  </div>
-  ${isCur&&R.goal?goalCard(R):''}
-  ${whereCard(R)}
-  <div class="card"><h3>توزيع المصاريف</h3>
-    ${parts.length?`<div class="donut-wrap"><svg class="donut" viewBox="0 0 150 150" role="img" aria-label="توزيع المصاريف على البنود"><circle cx="75" cy="75" r="${r}" fill="none" stroke="var(--surface-2)" stroke-width="18"/>${arcs}
-      <text x="75" y="72" text-anchor="middle" font-size="19" font-weight="600">${money(R.spent)}</text><text x="75" y="92" text-anchor="middle" font-size="11" style="fill:var(--muted)">${CUR}</text></svg>
-      <ul class="legend">${parts.map(c=>`<li><span class="sw" style="background:${catColor(c.i)}"></span><span class="nm">${esc(c.icon)} ${esc(c.name)}</span><span class="num">${money(c.spent)}</span><span class="pc num">${Math.round(c.spent/R.spent*100)}%</span></li>`).join('')}</ul></div>`
-    :`<div class="empty">مفيش مصاريف متسجلة ${isCur?'الشهر ده لسه':'في الشهر ده'}.</div>`}
-  </div>
-  ${compareCard()}
-  <div class="card"><div class="row between"><h3>آخر الحركات</h3><button type="button" class="link" data-act="search">🔍 بحث</button></div>
-    <div class="list">${shown.map(txRow).join('')||`<div class="empty">اضغط "سجّل مصروف" تحت علشان تضيف أول مصروف.</div>`}</div>
-    ${tx.length>6?`<button class="link" data-act="search">عرض الكل (${nf.format(tx.length)})</button>`:''}
-  </div>`;
+  ${isCur?heroBalance(R,F):`<div class="bal"><div class="bal-top"><span>فاضل من دخل ${esc(monthName(UI.ym))}</span></div><div class="bal-num">${smoney(R.remaining)}<small>${CUR}</small></div>
+    <div class="bal-row"><div><small>صرفت</small><b>${money(R.spent)}</b></div><div><small>التزامات</small><b>${money(R.commit)}</b></div></div></div>`}
+  ${!R.base?`<div class="banner"><p>سجّل راتبك ويوم القبض علشان الحسابات تبقى صح.</p><button type="button" data-act="salary">سجّل الراتب</button></div>`:''}
+  ${alerts.length?`<div class="notes" role="status">${alerts.slice(0,showN).map(a=>`<div class="note ${a.k}"><i></i><div>${a.h}</div></div>`).join('')}
+    ${alerts.length>2?`<button type="button" class="more" data-act="notes">${UI.allNotes?'أقل':`كمان ${nf.format(alerts.length-2)} تنبيه`}</button>`:''}</div>`:''}
+  ${isCur?`<div class="quick" aria-label="سجّل بسرعة">${quick.map(c=>`<button type="button" data-quick="${c.id}"><span>${esc(c.icon)}</span>${esc(c.name)}</button>`).join('')}<button type="button" data-quick="inc"><span>💰</span>دخل</button></div>`:''}
+  <div class="sec"><div class="sec-h"><h2>الشهر ده</h2><button type="button" data-act="insights">التحليلات</button></div>${monthCard(R)}</div>
+  <div class="sec"><div class="sec-h"><h2>آخر الحركات</h2>${tx.length?`<button type="button" data-act="search">الكل والبحث</button>`:''}</div>
+    <div class="card" style="padding-block:4px"><div class="list">${tx.slice(0,5).map(txRow).join('')||`<div class="empty">اضغط + تحت علشان تسجّل أول مصروف.</div>`}</div></div></div>`;
 }
 function txRow(x){
   if(x._k==='inc')return `<button type="button" class="item item-btn" data-open="inc" data-id="${x.id}"><div class="ic inc-ic">💰</div><div class="body"><div class="t">${esc(x.note||'دخل إضافي')}</div><div class="s">دخل إضافي · ${esc(shortDate(x.date))}</div></div><span class="amt inc-amt">+${money(x.amt)}</span></button>`;
   const c=catById(x.cat)||{icon:'❔',name:'—'};const sn=subName(c,x.sub);
   return `<button type="button" class="item item-btn" data-open="exp" data-id="${x.id}"><div class="ic ${x.cat===UNK?'unk-ic':''}">${esc(c.icon)}</div><div class="body"><div class="t">${esc(x.note||sn||c.name)}</div><div class="s">${esc(c.name)}${sn?' · '+esc(sn):''} · ${esc(shortDate(x.date))}</div></div><span class="amt">${money(x.amt)}</span></button>`;
 }
-function walletCard(R,F){
-  if(!S.cashSet)return `<div class="card wallet"><h3>معاك كام دلوقتي؟</h3><p class="small muted" style="margin:0 0 10px">سجّل الفلوس اللي معاك كلها (كاش وبنك ومحافظ) ويوم القبض. التطبيق هيتابع رصيدك مع كل حركة، ويقولك لو فيه فلوس اتصرفت ومتسجلتش، ويحذرك قبل ما فلوسك تخلص.</p><button type="button" class="btn full" data-act="cash">سجّل رصيدي</button></div>`;
-  const worth=S.cash+R.lent-R.owe;
-  const since=reconSince();
+function forecastCard(R,F){
+  if(!S.cashSet)return '';
   let msg='';
-  if(S.cash<0){
-    msg=`<p class="fc bad">⚠ رصيدك المتسجل بالسالب دلوقتي (${smoney(S.cash)} ${CUR}). ده معناه إن المتسجل كمصروفات أكتر من اللي كان معاك، أو إن الرصيد اللي بدأت بيه أقل من الحقيقي. اعمل <b>جرد</b> واكتب اللي معاك فعلًا علشان التوقع يبقى صح.</p>`;
-  }else if(F.firstNeg){
-    msg=`<p class="fc bad">⚠ رصيدك هيخلص <b>${esc(dayName(F.firstNeg.date))}</b> وهيوصل ${smoney(F.firstNeg.bal)} ${CUR} بسبب <b>${esc(F.firstNeg.cause)}</b>.</p>`;
-    if(F.safe!==null&&F.firstNeg.date<F.stop)msg+=F.safe>0?`<p class="fc-tip">علشان تعدّي لحد ${F.nextPay?'القبض '+esc(dayName(F.nextPay)):'آخر الشهر'}، متصرفش أكتر من <b class="num">${money(F.safe)}</b> ${CUR} في اليوم (بدل <span class="num">${money(F.rate)}</span>).</p>`
-      :(()=>{const Z=project(0);const z=Z.firstNeg;return `<p class="fc-tip">حتى لو مصرفتش خالص، <b>${esc(z?z.cause:'الالتزامات')}</b> ${z?esc(dayName(z.date)):''} هتخلّي رصيدك ${z?smoney(z.bal):''} ${CUR}. ${R.lent?`حصّل جزء من <span class="num">${money(R.lent)}</span> اللي ليك عند الناس، أو `:''}أجّل الدفعة دي لحد القبض.</p>`})();
-  }else if(F.nextPay)msg=`<p class="fc ok">رصيدك هيكفي لحد القبض ${esc(dayName(F.nextPay))}، وهيفضل معاك تقريبًا <b class="num">${money(F.balBeforePay)}</b> ${CUR} قبل الراتب.</p>`;
-  else msg=`<p class="fc ok">بمعدل صرفك (<span class="num">${money(F.rate)}</span> في اليوم) هيفضل معاك تقريبًا <b class="num">${money(F.end)}</b> ${CUR} بعد 45 يوم. سجّل يوم القبض علشان التوقع يبقى أدق.</p>`;
-  const upcoming=F.events.filter(e=>dayDiff(e.date,today())<=14).slice(0,6);
-  return `<div class="card wallet">
-    <div class="row between"><div><span class="k">معاك دلوقتي</span><div class="wal-big num">${smoney(S.cash)} <small>${CUR}</small></div></div>
-      <div class="wal-actions"><button type="button" class="btn small-btn" data-act="recon">جرد</button><button type="button" class="icon-btn" data-act="cash" aria-label="عدّل الرصيد"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></button></div></div>
-    <div class="wal-split">
-      <div><small>ليّا</small><b class="num" style="color:var(--green)">${money(R.lent)}</b></div>
-      <div><small>عليّا</small><b class="num" style="color:var(--warm)">${money(R.owe)}</b></div>
-      <div><small>صافي فلوسك</small><b class="num">${smoney(worth)}</b></div>
-    </div>
-    ${spark(F)}
-    ${msg}
-    ${(()=>{const inc=sum(F.incoming);const out=R.lent-inc;let h='';
-      if(inc)h+=`<p class="small" style="margin:0">محسوب في التوقع: <b class="num" style="color:var(--green)">+${money(inc)}</b> ${CUR} هيرجعولك (${F.incoming.slice(0,3).map(e=>`${esc(e.who)} ${esc(dayName(e.date))}`).join('، ')}${F.incoming.length>3?'…':''}).</p>`;
-      if(F.ifLate)h+=`<p class="small" style="margin:0;color:var(--danger)">لو اتأخروا، رصيدك هيخلص ${esc(dayName(F.ifLate.date))} بدل كده.</p>`;
-      if(out>0.5)h+=`<p class="small muted" style="margin:0">مش محسوب: <span class="num">${money(out)}</span> ${CUR} ليك من غير ميعاد سداد. حط لها ميعاد أو قسط من شاشة الديون علشان تدخل التوقع.</p>`;
-      return h})()}
-    ${upcoming.length?`<details class="upc"><summary>الجاي في أسبوعين (${nf.format(upcoming.length)})</summary><ul>${upcoming.map(e=>`<li><span>${esc(e.label)}${e.late?' <b class="late">متأخر</b>':''}</span><span class="muted small">${esc(dayName(e.date))}</span><b class="num ${e.amt>0?'pos':''}">${e.amt>0?'+':''}${money(e.amt)}</b></li>`).join('')}</ul></details>`:''}
-    ${(S.cashLog||[]).length?`<details class="upc"><summary>حركات الرصيد (${nf.format(S.cashLog.length)})</summary><ul class="clog">${S.cashLog.slice(-20).reverse().map(l=>{const d=new Date(l.t);return `<li><span>${esc(l.why)}<small class="muted"> · ${esc(dayName(iso(d)))} ${pad(d.getHours())}:${pad(d.getMinutes())}</small></span><b class="num ${l.d>0?'pos':''}"><bdi dir="ltr">${l.d>0?'+':'−'}${money(Math.abs(l.d))}</bdi></b><span class="small muted num">${money(l.bal)}</span></li>`}).join('')}</ul></details>`:''}
-    <p class="small muted" style="margin:0">الرصيد ده حسب اللي اتسجل. لو اللي معاك فعلًا مختلف، اعمل جرد. آخر جرد: ${esc(dayName(since))}</p>
+  if(S.cash<0)msg=`<p class="fc bad">رصيدك المتسجل بالسالب (${smoney(S.cash)} ${CUR}). غالبًا فيه مصروفات اتسجلت أكتر من اللي كان معاك، أو رصيد البداية كان أقل من الحقيقي. اعمل جرد.</p>`;
+  else if(F.firstNeg){
+    msg=`<p class="fc bad">رصيدك هيخلص <b>${esc(dayName(F.firstNeg.date))}</b> وهيوصل ${smoney(F.firstNeg.bal)} ${CUR} بسبب <b>${esc(F.firstNeg.cause)}</b>.</p>`;
+    if(F.safe!==null&&F.firstNeg.date<F.stop)msg+=F.safe>0?`<p class="fc-tip">علشان تعدّي لحد ${F.nextPay?'القبض '+esc(dayName(F.nextPay)):'آخر الشهر'}، متصرفش أكتر من <b class="num">${money(F.safe)}</b> في اليوم (بدل <span class="num">${money(F.rate)}</span>).</p>`
+      :(()=>{const z=project(0).firstNeg;return `<p class="fc-tip">حتى لو مصرفتش خالص، <b>${esc(z?z.cause:'الالتزامات')}</b> ${z?esc(dayName(z.date)):''} هتخلّي رصيدك ${z?smoney(z.bal):''}. أجّلها أو حصّل جزء من اللي ليك.</p>`})();
+  }else msg=F.nextPay?`<p class="fc ok">رصيدك هيكفي لحد القبض ${esc(dayName(F.nextPay))}، وهيفضل معاك تقريبًا <b class="num">${money(F.balBeforePay)}</b> قبل الراتب.</p>`:`<p class="fc ok">بمعدل صرفك (<span class="num">${money(F.rate)}</span> في اليوم) هيفضل معاك تقريبًا <b class="num">${money(F.end)}</b> بعد 45 يوم.</p>`;
+  const inc=sum(F.incoming),out=R.lent-inc;
+  const upcoming=F.events.filter(e=>dayDiff(e.date,today())<=21).slice(0,8);
+  return `<div class="card chart-card">
+    ${spark(F)}${msg}
+    ${inc?`<p class="small" style="margin:0">محسوب: <b class="num" style="color:var(--green)">+${money(inc)}</b> هيرجعولك (${F.incoming.slice(0,3).map(e=>`${esc(e.who)} ${esc(dayName(e.date))}`).join('، ')}).</p>`:''}
+    ${F.ifLate?`<p class="small" style="margin:0;color:var(--danger)">لو اتأخروا، رصيدك هيخلص ${esc(dayName(F.ifLate.date))}.</p>`:''}
+    ${out>0.5?`<p class="small muted" style="margin:0">مش محسوب: <span class="num">${money(out)}</span> ليك من غير ميعاد سداد.</p>`:''}
+    ${upcoming.length?`<div class="upc"><ul>${upcoming.map(e=>`<li><span>${esc(e.label)}${e.late?' <b class="late">متأخر</b>':''}</span><span class="muted small">${esc(dayName(e.date))}</span><b class="num ${e.amt>0?'pos':''}"><bdi dir="ltr">${e.amt>0?'+':'−'}${money(Math.abs(e.amt))}</bdi></b></li>`).join('')}</ul></div>`:''}
   </div>`;
+}
+function renderInsights(){
+  const R=calc(UI.ym),isCur=UI.ym===curYM(),cur=curYM();const F=isCur&&S.cashSet?forecast():null;const usedPct=Math.round(R.used*100);
+  const parts=R.byCat.filter(c=>c.spent>0).sort((a,b)=>b.spent-a.spent);
+  const r=56,C=2*Math.PI*r;let off=0;
+  const arcs=parts.map(c=>{const len=C*c.spent/R.spent;const g=parts.length>1?Math.min(3,len/3):0;const s=`<circle cx="75" cy="75" r="${r}" fill="none" stroke="${catColor(c.i)}" stroke-width="18" stroke-dasharray="${Math.max(0,len-g)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 75 75)"/>`;off+=len;return s}).join('');
+  $('#s-insights').innerHTML=`
+  ${F?`<div class="sec"><div class="sec-h"><h2>رصيدك الـ 45 يوم الجايين</h2></div>${forecastCard(R,F)}</div>`:''}
+  <div class="sec"><div class="sec-h"><h2>أرقام الشهر</h2></div>
+  <div class="ins-grid">
+    <div class="stat"><span class="k">استهلكت من الدخل</span><span class="v">${usedPct}<small>%</small></span></div>
+    <div class="stat"><span class="k">متوسط صرفك اليومي</span><span class="v">${money(R.avg)}</span></div>
+    <div class="stat"><span class="k">المسموح يوميًا</span><span class="v">${isCur?money(R.allowed):'—'}</span>${R.goal?'<span class="h">بعد هدف الادخار</span>':''}</div>
+    <div class="stat ${R.forecastLeft<0?'bad':''}"><span class="k">${UI.ym<cur?'فضل آخر الشهر':'متوقع آخر الشهر'}</span><span class="v">${smoney(R.forecastLeft)}</span></div>
+    <button type="button" class="stat wide" data-act="debts"><span class="k">صافي الديون</span><span class="v">${smoney(R.net)}</span><span class="h">ليّا ${money(R.lent)} · عليّا ${money(R.owe)}${(()=>{const P=R.owe>0?payoffInfo():null;return P&&P.end?` · تخلص ${esc(monthName(P.end))}`:''})()}</span></button>
+  </div></div>
+  ${isCur&&R.goal?goalCard(R):''}
+  ${whereCard(R)}
+  ${parts.length?`<div class="card"><h3>توزيع المصاريف</h3><div class="donut-wrap"><svg class="donut" viewBox="0 0 150 150" role="img" aria-label="توزيع المصاريف على البنود"><circle cx="75" cy="75" r="${r}" fill="none" stroke="var(--surface-2)" stroke-width="18"/>${arcs}
+      <text x="75" y="72" text-anchor="middle" font-size="19" font-weight="600">${money(R.spent)}</text><text x="75" y="92" text-anchor="middle" font-size="11" style="fill:var(--muted)">${CUR}</text></svg>
+      <ul class="legend">${parts.map(c=>`<li><span class="sw" style="background:${catColor(c.i)}"></span><span class="nm">${esc(c.icon)} ${esc(c.name)}</span><span class="num">${money(c.spent)}</span><span class="pc num">${Math.round(c.spent/R.spent*100)}%</span></li>`).join('')}</ul></div></div>`:''}
+  ${compareCard()}
+  ${(S.cashLog||[]).length?`<div class="card"><details class="upc"><summary>حركات الرصيد (${nf.format(S.cashLog.length)})</summary><ul class="clog">${S.cashLog.slice(-30).reverse().map(l=>{const d=new Date(l.t);return `<li><span>${esc(l.why)}<small class="muted"> · ${esc(dayName(iso(d)))} ${pad(d.getHours())}:${pad(d.getMinutes())}</small></span><b class="num ${l.d>0?'pos':''}"><bdi dir="ltr">${l.d>0?'+':'−'}${money(Math.abs(l.d))}</bdi></b><span class="small muted num">${money(l.bal)}</span></li>`}).join('')}</ul></details></div>`:''}`;
 }
 function spark(F){
   const pts=F.pts;if(pts.length<2)return '';
@@ -387,7 +402,7 @@ function spark(F){
     <path d="${area}" fill="url(#sg)"/>
     <line x1="${pl}" x2="${W-pr}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="3 3" stroke-width="1" opacity=".6"/>
     <path d="${line}" fill="none" stroke="var(--teal-2)" stroke-width="2" stroke-linejoin="round"/>
-    ${pays.map(o=>`<line x1="${x(o.i)}" x2="${x(o.i)}" y1="${pt}" y2="${H-pb}" stroke="var(--green)" stroke-width="1" opacity=".5"/><text x="${Math.min(W-14,Math.max(14,x(o.i)))}" y="10" text-anchor="middle" font-size="9" fill="var(--green)">قبض</text>`).join('')}
+    ${pays.filter(o=>neg<0||Math.abs(x(o.i)-x(neg))>28).map(o=>`<line x1="${x(o.i)}" x2="${x(o.i)}" y1="${pt}" y2="${H-pb}" stroke="var(--green)" stroke-width="1" opacity=".5"/><text x="${Math.min(W-14,Math.max(14,x(o.i)))}" y="10" text-anchor="middle" font-size="9" fill="var(--green)">قبض</text>`).join('')}
     ${F.events.filter(e=>e.kind==='debtIn'||e.kind==='debt').map(e=>{const i=pts.findIndex(p=>p.date===e.date);return i<0?'':`<circle cx="${x(i)}" cy="${y(pts[i].bal)}" r="3.5" fill="${e.amt>0?'var(--green)':'var(--warm)'}" stroke="var(--surface)" stroke-width="1.5"/>`}).join('')}
     ${neg>=0?`<circle cx="${x(neg)}" cy="${y(pts[neg].bal)}" r="4" fill="var(--danger)"/><text x="${Math.min(W-14,Math.max(14,x(neg)))}" y="10" text-anchor="middle" font-size="9" fill="var(--danger)">عجز</text>`:''}
     <circle cx="${x(0)}" cy="${y(pts[0].bal)}" r="3" fill="var(--teal-2)"/>
@@ -495,10 +510,10 @@ function renderDebts(){
         :`<li>الديون اللي من غير قسط (<span class="num">${money(P.rest)}</span> ${CUR}): مفيش فايض متوقع الشهر ده يكفي تسددها. حط لها قسط شهري من "تعديل".</li>`):''}
     </ul></div>`;
   $('#s-debts').innerHTML=`
-  <div class="stats">
-    <div class="stat debt"><span class="k">عليّا</span><span class="v">${money(R.owe)}<small>${CUR}</small></span></div>
-    <div class="stat debt"><span class="k">ليّا</span><span class="v" style="color:var(--green)">${money(R.lent)}<small>${CUR}</small></span></div>
-    <div class="stat wide"><div class="row between"><span class="k">الصافي</span><span class="v" style="color:${R.net<0?'var(--warm)':'var(--green)'}">${smoney(R.net)} <small>${CUR}</small></span></div></div>
+  <div class="card dsum">
+    <div><small>عليّا</small><b style="color:var(--warm)">${money(R.owe)}</b></div>
+    <div><small>ليّا</small><b style="color:var(--green)">${money(R.lent)}</b></div>
+    <div><small>الصافي</small><b>${smoney(R.net)}</b></div>
   </div>
   ${payoff}
   <div class="seg warmseg" role="group" aria-label="نوع الدين">
@@ -1022,12 +1037,13 @@ function syncNative(){
 
 /* ---------- global click handling ---------- */
 document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-act],[data-open],[data-cat],[data-dir],[data-pay],[data-inst],[data-edit-debt],[data-edit-com],[data-paid],[data-got]');if(!t)return;
+  const t=e.target.closest('[data-act],[data-quick],[data-open],[data-cat],[data-dir],[data-pay],[data-inst],[data-edit-debt],[data-edit-com],[data-paid],[data-got]');if(!t)return;
   const ds=t.dataset;
   if(ds.act){e.preventDefault();({
     salary:salarySheet,cash:cashSheet,recon:()=>reconSheet(),reconMonth:reconMonthSheet,goal:goalSheet,search:searchSheet,fresh:freshSheet,addCat:()=>catSheet(),
     addDebt:()=>debtSheet(null,UI.debtDir),addGam:()=>comSheet(null,'gam'),addBill:()=>comSheet(null,'bill'),
-    debts:()=>{if(sheet.open)sheet.close();go('debts')}})[ds.act]?.();return}
+    debts:()=>{if(sheet.open)sheet.close();go('debts')},insights:()=>go('insights'),budget:()=>go('budget'),notes:()=>{UI.allNotes=!UI.allNotes;renderHome()}})[ds.act]?.();return}
+  if(ds.quick){ds.quick==='inc'?txSheet({kind:'inc'}):txSheet({cat:ds.quick});return}
   if(ds.open){itemSheet(ds.open,ds.id);return}
   if(ds.cat&&t.classList.contains('cat')){catSheet(catById(ds.cat));return}
   if(ds.dir){UI.debtDir=ds.dir;renderDebts();return}
@@ -1049,16 +1065,16 @@ document.addEventListener('click',e=>{
 });
 
 /* ---------- routing ---------- */
-const TABS={home:'الرئيسية',budget:'الميزانية',debts:'الديون',commit:'الالتزامات'};
+const TABS={home:'الرئيسية',budget:'الميزانية',debts:'الديون',commit:'الالتزامات',insights:'التحليلات'};
 function render(){
   const t=UI.tab;
-  Object.keys(TABS).forEach(k=>{$('#s-'+k).hidden=k!==t;const a=document.querySelector(`[data-tab="${k}"]`);if(k===t)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')});
-  $('#title').firstChild.textContent=t==='home'?'ميزان':TABS[t];
-  $('#monthLbl').textContent=monthName(UI.ym)+(UI.ym===curYM()?' · الشهر الحالي':'');
+  Object.keys(TABS).forEach(k=>{$('#s-'+k).hidden=k!==t;const a=document.querySelector(`[data-tab="${k}"]`);if(!a)return;if(k===t||(t==='insights'&&k==='home'))a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')});
+  $('#title').textContent=t==='home'?'ميزان':TABS[t];
+  $('#backBtn').hidden=t!=='insights';
+  $('#monthLbl').textContent=UI.ym===curYM()?monthShort(UI.ym)+' '+UI.ym.slice(0,4):monthName(UI.ym);
   $('#nextM').disabled=UI.ym>=curYM();
-  $('#prevM').hidden=$('#nextM').hidden=t==='debts';
-  $('#fab').hidden=t!=='home'&&t!=='budget';
-  ({home:renderHome,budget:renderBudget,debts:renderDebts,commit:renderCommit})[t]();
+  $('#monthBox').hidden=t==='debts';
+  ({home:renderHome,budget:renderBudget,debts:renderDebts,commit:renderCommit,insights:renderInsights})[t]();
 }
 function go(t){UI.tab=TABS[t]?t:'home';try{history.replaceState(null,'','#'+UI.tab)}catch(_){}render();window.scrollTo(0,0)}
 function fromHash(){const h=(location.hash||'').slice(1);UI.tab=TABS[h]?h:'home';render();window.scrollTo(0,0)}
@@ -1067,7 +1083,8 @@ window.addEventListener('hashchange',fromHash);
 $('#prevM').onclick=()=>{UI.ym=ymAdd(UI.ym,-1);render()};
 $('#nextM').onclick=()=>{if(UI.ym<curYM()){UI.ym=ymAdd(UI.ym,1);render()}};
 $('#settingsBtn').onclick=settingsSheet;
-$('#fab').onclick=()=>txSheet();
+$('#navAdd').onclick=()=>txSheet();
+$('#backBtn').onclick=()=>go('home');
 
 /* startup */
 const added=creditSalary();
