@@ -216,7 +216,7 @@ function dailyRate(){
   if(budget>0)return budget/R.days;
   return R.day?variable/R.day:0;
 }
-function project(rate,H=45){
+function project(rate,H=45,noLent=false){
   const t=today();let bal=S.cash;const pts=[];const events=[];
   const left={};S.debts.forEach(d=>left[d.id]=Math.max(0,d.amt-d.paid));
   let firstNeg=null,nextPay=null,balBeforePay=null,minBal=bal,minDate=t;
@@ -228,6 +228,9 @@ function project(rate,H=45){
       const day=c.due||S.payday||1;
       if(!(c.paid||[]).includes(ym)&&hit(day))ev.push({label:c.name,amt:-c.amt,kind:c.type,late:k===0&&clampDay(ym,day)<D});
       if(c.type==='gam'&&ymDiff(ym,c.start)+1===c.turn&&!c.got[ym]&&hit(day))ev.push({label:'قبض '+c.name,amt:c.amt*c.months,kind:'in'})});
+    S.debts.forEach(d=>{if(d.dir!=='lent'||noLent||d.expect===false||left[d.id]<=0)return;
+      if(d.inst>0&&d.instStart&&ym>=d.instStart&&!(d.instPay||{})[ym]&&hit(d.instDay||S.payday||1)){const a=Math.min(d.inst,left[d.id]);left[d.id]-=a;ev.push({label:'قسط من '+d.name,amt:a,kind:'debtIn',who:d.name})}
+      else if(!(d.inst>0)&&d.due&&d.due>=t&&d.due===D){ev.push({label:d.name+' يسددلك',amt:left[d.id],kind:'debtIn',who:d.name});left[d.id]=0}});
     S.debts.forEach(d=>{if(d.dir!=='owe'||left[d.id]<=0)return;
       if(d.inst>0&&d.instStart&&ym>=d.instStart&&!(d.instPay||{})[ym]&&hit(d.instDay||S.payday||1)){const a=Math.min(d.inst,left[d.id]);left[d.id]-=a;ev.push({label:'قسط '+d.name,amt:-a,kind:'debt'})}
       else if(!(d.inst>0)&&d.due&&(k===0?d.due<=D:d.due===D)){ev.push({label:'سداد '+d.name,amt:-left[d.id],kind:'debt',late:d.due<D});left[d.id]=0}});
@@ -241,7 +244,8 @@ function project(rate,H=45){
     if(bal<0&&!firstNeg){const big=ev.filter(e=>e.amt<0&&e.kind!=='daily').sort((a,b)=>a.amt-b.amt)[0];firstNeg={date:D,bal,cause:big?big.label:(rate>0?'مصروفك اليومي':'الالتزامات')}}
     if(nextPay===D&&balBeforePay===null)balBeforePay=bal-S.salary;
   }
-  return {pts,events,firstNeg,nextPay,balBeforePay,minBal,minDate,rate,end:bal};
+  const incoming=events.filter(e=>e.kind==='debtIn');
+  return {pts,events,incoming,firstNeg,nextPay,balBeforePay,minBal,minDate,rate,end:bal,start:S.cash};
 }
 function forecast(){
   if(!S.cashSet)return null;
@@ -253,7 +257,9 @@ function forecast(){
     if(negBefore(project(0)))safe=0;
     else{let lo=0,hi=rate;for(let i=0;i<20;i++){const m=(lo+hi)/2;negBefore(project(m))?hi=m:lo=m}safe=lo}
   }
-  return {...P,safe,stop};
+  // what if the people who owe me are late?
+  let ifLate=null;if(P.incoming.length){const L=project(rate,45,true);if(L.firstNeg&&(!P.firstNeg||L.firstNeg.date<P.firstNeg.date))ifLate=L.firstNeg}
+  return {...P,safe,stop,ifLate};
 }
 
 /* ---------- reconciliation (جرد) ---------- */
@@ -338,7 +344,9 @@ function walletCard(R,F){
   const worth=S.cash+R.lent-R.owe;
   const since=reconSince();
   let msg='';
-  if(F.firstNeg){
+  if(S.cash<0){
+    msg=`<p class="fc bad">⚠ رصيدك المتسجل بالسالب دلوقتي (${smoney(S.cash)} ${CUR}). ده معناه إن المتسجل كمصروفات أكتر من اللي كان معاك، أو إن الرصيد اللي بدأت بيه أقل من الحقيقي. اعمل <b>جرد</b> واكتب اللي معاك فعلًا علشان التوقع يبقى صح.</p>`;
+  }else if(F.firstNeg){
     msg=`<p class="fc bad">⚠ رصيدك هيخلص <b>${esc(dayName(F.firstNeg.date))}</b> وهيوصل ${smoney(F.firstNeg.bal)} ${CUR} بسبب <b>${esc(F.firstNeg.cause)}</b>.</p>`;
     if(F.safe!==null&&F.firstNeg.date<F.stop)msg+=F.safe>0?`<p class="fc-tip">علشان تعدّي لحد ${F.nextPay?'القبض '+esc(dayName(F.nextPay)):'آخر الشهر'}، متصرفش أكتر من <b class="num">${money(F.safe)}</b> ${CUR} في اليوم (بدل <span class="num">${money(F.rate)}</span>).</p>`
       :(()=>{const Z=project(0);const z=Z.firstNeg;return `<p class="fc-tip">حتى لو مصرفتش خالص، <b>${esc(z?z.cause:'الالتزامات')}</b> ${z?esc(dayName(z.date)):''} هتخلّي رصيدك ${z?smoney(z.bal):''} ${CUR}. ${R.lent?`حصّل جزء من <span class="num">${money(R.lent)}</span> اللي ليك عند الناس، أو `:''}أجّل الدفعة دي لحد القبض.</p>`})();
@@ -355,7 +363,11 @@ function walletCard(R,F){
     </div>
     ${spark(F)}
     ${msg}
-    ${R.lent?`<p class="small muted" style="margin:0">مش محسوب في التوقع: <span class="num">${money(R.lent)}</span> ${CUR} ليك عند الناس.</p>`:''}
+    ${(()=>{const inc=sum(F.incoming);const out=R.lent-inc;let h='';
+      if(inc)h+=`<p class="small" style="margin:0">محسوب في التوقع: <b class="num" style="color:var(--green)">+${money(inc)}</b> ${CUR} هيرجعولك (${F.incoming.slice(0,3).map(e=>`${esc(e.who)} ${esc(dayName(e.date))}`).join('، ')}${F.incoming.length>3?'…':''}).</p>`;
+      if(F.ifLate)h+=`<p class="small" style="margin:0;color:var(--danger)">لو اتأخروا، رصيدك هيخلص ${esc(dayName(F.ifLate.date))} بدل كده.</p>`;
+      if(out>0.5)h+=`<p class="small muted" style="margin:0">مش محسوب: <span class="num">${money(out)}</span> ${CUR} ليك من غير ميعاد سداد. حط لها ميعاد أو قسط من شاشة الديون علشان تدخل التوقع.</p>`;
+      return h})()}
     ${upcoming.length?`<details class="upc"><summary>الجاي في أسبوعين (${nf.format(upcoming.length)})</summary><ul>${upcoming.map(e=>`<li><span>${esc(e.label)}${e.late?' <b class="late">متأخر</b>':''}</span><span class="muted small">${esc(dayName(e.date))}</span><b class="num ${e.amt>0?'pos':''}">${e.amt>0?'+':''}${money(e.amt)}</b></li>`).join('')}</ul></details>`:''}
     ${(S.cashLog||[]).length?`<details class="upc"><summary>حركات الرصيد (${nf.format(S.cashLog.length)})</summary><ul class="clog">${S.cashLog.slice(-20).reverse().map(l=>{const d=new Date(l.t);return `<li><span>${esc(l.why)}<small class="muted"> · ${esc(dayName(iso(d)))} ${pad(d.getHours())}:${pad(d.getMinutes())}</small></span><b class="num ${l.d>0?'pos':''}"><bdi dir="ltr">${l.d>0?'+':'−'}${money(Math.abs(l.d))}</bdi></b><span class="small muted num">${money(l.bal)}</span></li>`}).join('')}</ul></details>`:''}
     <p class="small muted" style="margin:0">الرصيد ده حسب اللي اتسجل. لو اللي معاك فعلًا مختلف، اعمل جرد. آخر جرد: ${esc(dayName(since))}</p>
@@ -376,6 +388,7 @@ function spark(F){
     <line x1="${pl}" x2="${W-pr}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="3 3" stroke-width="1" opacity=".6"/>
     <path d="${line}" fill="none" stroke="var(--teal-2)" stroke-width="2" stroke-linejoin="round"/>
     ${pays.map(o=>`<line x1="${x(o.i)}" x2="${x(o.i)}" y1="${pt}" y2="${H-pb}" stroke="var(--green)" stroke-width="1" opacity=".5"/><text x="${Math.min(W-14,Math.max(14,x(o.i)))}" y="10" text-anchor="middle" font-size="9" fill="var(--green)">قبض</text>`).join('')}
+    ${F.events.filter(e=>e.kind==='debtIn'||e.kind==='debt').map(e=>{const i=pts.findIndex(p=>p.date===e.date);return i<0?'':`<circle cx="${x(i)}" cy="${y(pts[i].bal)}" r="3.5" fill="${e.amt>0?'var(--green)':'var(--warm)'}" stroke="var(--surface)" stroke-width="1.5"/>`}).join('')}
     ${neg>=0?`<circle cx="${x(neg)}" cy="${y(pts[neg].bal)}" r="4" fill="var(--danger)"/><text x="${Math.min(W-14,Math.max(14,x(neg)))}" y="10" text-anchor="middle" font-size="9" fill="var(--danger)">عجز</text>`:''}
     <circle cx="${x(0)}" cy="${y(pts[0].bal)}" r="3" fill="var(--teal-2)"/>
     <text x="${W-pr}" y="${H-3}" text-anchor="end" font-size="9" fill="var(--muted)">النهارده</text>
@@ -850,6 +863,7 @@ function debtSheet(d,dir){
     <label class="field"><span>الأقساط تبدأ شهر</span><input class="input" type="month" id="f-istart" value="${d.instStart||curYM()}"></label></div>
     <label class="field"><span>يوم دفع القسط (اختياري)</span><input class="input" id="f-iday" inputmode="numeric" value="${d.instDay||''}" placeholder="${S.payday?'يوم القبض ('+S.payday+')':'مثلاً 1'}"></label>
     <p class="small muted" id="planHint" style="margin:-4px 0 0"></p>
+    <label class="toggle" id="expRow"><span>احسب سداده في توقع رصيدي<br><small class="muted">على ميعاد السداد أو يوم القسط. شيلها لو مش متأكد إنه هيدفع في ميعاده</small></span><input type="checkbox" id="f-expect" ${d.expect===false?'':'checked'}></label>
     <label class="toggle"><span><span id="cxLbl"></span><br><small class="muted">شيلها لو ده دين قديم بتسجّله بس، علشان ميتحسبش على الشهر ده${S.cashSet?' ولا على رصيدك':''}</small></span><input type="checkbox" id="f-moved" ${isNew?'':(d.moved?'checked':'')}></label>
     <button class="btn warmb full">${isNew?'أضف':'حفظ'}</button>
     ${!isNew?`<div class="btn-row">${d.paid>0?'<button type="button" class="btn ghost" id="unpay">إلغاء السداد</button>':''}<button type="button" class="btn dangerb" id="delDebt">مسح</button></div>`:''}`,
@@ -859,14 +873,14 @@ function debtSheet(d,dir){
     const idv=$('#f-iday',f).value.trim(),iday=idv?Math.round(toNum(idv)):0;if(idv&&!(iday>=1&&iday<=31))return 'يوم القسط بين 1 و 31.';
     const v={dir:f.dataset.dir,name,amt:a,note:$('#f-note',f).value.trim(),date:$('#f-date',f).value||today(),due:$('#f-due',f).value,inst,instStart:inst?ist:'',instDay:iday||0};
     if(!isNew&&a<d.paid)return `المبلغ أقل من اللي اتسدد فعلًا (${money(d.paid)}). لو فيه سداد غلط، استخدم "إلغاء السداد" الأول.`;
-    v.moved=$('#f-moved',f).checked;
+    v.moved=$('#f-moved',f).checked;v.expect=$('#f-expect',f).checked;
     const t=isNew?{id:uid(),paid:0,cxPay:{},cxSum:0,instPay:{},instOn:{},pays:[],openCx:0}:d;
     Object.assign(t,v);t.paid=Math.min(t.paid,a);
     // the balance follows the "money moved" switch (until a new balance/reconciliation locks it)
     if(S.cashSet&&!t.cashLocked){const target=v.moved&&cashOn(v.date)?(v.dir==='owe'?a:-a):0;const delta=target-(t.openCx||0);
       if(delta){S.cash+=delta;why=(v.dir==='owe'?'استلفت من ':'سلّفت ')+name+(isNew?'':' (تعديل)')}t.openCx=target}
     if(isNew)S.debts.push(t);UI.debtDir=v.dir;return {toast:'اتحفظ'}},
-  f=>{picker(f,'dir',d.dir,()=>{hint();cxl(false)});
+  f=>{const er=()=>{$('#expRow',f).hidden=f.dataset.dir!=='lent'};picker(f,'dir',d.dir,()=>{hint();cxl(false);er()});er();
     const cxl=(init)=>{const l=$('#cxLbl',f);l.textContent=f.dataset.dir==='owe'?'الفلوس دي دخلت جيبي فعلًا (استلفتها في التاريخ ده)':'الفلوس دي طلعت من جيبي فعلًا (سلّفتها في التاريخ ده)';if(isNew&&init!==false)$('#f-moved',f).checked=($('#f-date',f).value||today())>=today().slice(0,7)+'-01'};
     const e=d.openCx||0;
     const del=$('#delDebt',f);del&&arm(del,()=>{if(e){S.cash-=e;why='مسح دين '+d.name}S.debts=S.debts.filter(x=>x.id!==d.id);done(e?`اتمسح، ورصيدك رجع زي ما كان قبل ما تسجّله (${e>0?'−':'+'}${money(Math.abs(e))})`:'اتمسح')},e?`اضغط تاني: هيتشال ويرجع ${money(Math.abs(e))} ${e>0?'من':'لـ'} رصيدك`:'اضغط تاني: الرصيد مش هيتغيّر');
