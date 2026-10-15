@@ -398,8 +398,14 @@ body{font-size:15px}
 
 /* quick add */
 .quick{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
-.quick button{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 8px;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);cursor:pointer;font-size:12.5px}
-.quick button span{font-size:20px;line-height:1}
+.quick button{min-width:0;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:5px;padding:10px 8px;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);cursor:pointer;font-size:12.5px}
+.quick .qi{font-size:20px;line-height:1}
+.quick .qn{width:100%;font-size:12px;line-height:1.3;text-align:center;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cm-top{gap:10px}
+.cm-top span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cm-top b{flex:none}
+.legend .nm,.ms-rows li span,.item .t,.item .s,.sub-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.pick{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* month summary */
 .month-sum{display:flex;flex-direction:column;gap:14px}

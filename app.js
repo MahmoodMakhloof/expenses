@@ -336,7 +336,7 @@ function renderHome(){
   ${!R.base?`<div class="banner"><p>سجّل راتبك ويوم القبض علشان الحسابات تبقى صح.</p><button type="button" data-act="salary">سجّل الراتب</button></div>`:''}
   ${alerts.length?`<div class="notes" role="status">${alerts.slice(0,showN).map(a=>`<div class="note ${a.k}"><i></i><div>${a.h}</div></div>`).join('')}
     ${alerts.length>2?`<button type="button" class="more" data-act="notes">${UI.allNotes?'أقل':`كمان ${nf.format(alerts.length-2)} تنبيه`}</button>`:''}</div>`:''}
-  ${isCur?`<div class="quick" aria-label="سجّل بسرعة">${quick.map(c=>`<button type="button" data-quick="${c.id}"><span>${esc(c.icon)}</span>${esc(c.name)}</button>`).join('')}<button type="button" data-quick="inc"><span>💰</span>دخل</button></div>`:''}
+  ${isCur?`<div class="quick" aria-label="سجّل بسرعة">${quick.map(c=>`<button type="button" data-quick="${c.id}" title="${esc(c.name)}"><span class="qi">${esc(c.icon)}</span><span class="qn">${esc(c.name)}</span></button>`).join('')}<button type="button" data-quick="inc"><span class="qi">💰</span><span class="qn">دخل</span></button></div>`:''}
   <div class="sec"><div class="sec-h"><h2>الشهر ده</h2><button type="button" data-act="insights">التحليلات</button></div>${monthCard(R)}</div>
   <div class="sec"><div class="sec-h"><h2>آخر الحركات</h2>${tx.length?`<button type="button" data-act="search">الكل والبحث</button>`:''}</div>
     <div class="card" style="padding-block:4px"><div class="list">${tx.slice(0,5).map(txRow).join('')||`<div class="empty">اضغط + تحت علشان تسجّل أول مصروف.</div>`}</div></div></div>`;
