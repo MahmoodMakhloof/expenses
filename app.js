@@ -294,7 +294,7 @@ function heroBalance(R,F){
   let msg;
   if(S.cash<0)msg=`رصيدك المتسجل بالسالب. اعمل <b>جرد</b> واكتب اللي معاك فعلًا.`;
   else if(short)msg=F.safe>0?`هتخلص <b>${esc(dayName(F.firstNeg.date))}</b>. علشان تكمّل ${F.nextPay?'للقبض':''}، متصرفش أكتر من <b class="num">${money(F.safe)}</b> في اليوم.`
-    :`<b>${esc(F.firstNeg.cause)}</b> ${esc(dayName(F.firstNeg.date))} أكبر من رصيدك. أجّلها أو حصّل جزء من اللي ليك.`;
+    :(()=>{const z=project(0).firstNeg||F.firstNeg;return `حتى من غير صرف، <b>${esc(z.cause)}</b> ${esc(dayName(z.date))} أكبر من رصيدك. أجّلها أو حصّل جزء من اللي ليك.`})();
   else msg=F.nextPay?`تكفيك لحد القبض، ويفضل معاك حوالي <b class="num">${money(Math.max(0,F.balBeforePay))}</b>.`:`تكفيك الـ 30 يوم الجايين بمعدل صرفك.`;
   const todayCan=short?(F.safe||0):R.allowed;
   return `<div class="bal">
